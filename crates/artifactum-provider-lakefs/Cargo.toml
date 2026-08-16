@@ -1,0 +1,20 @@
+[package]
+name="artifactum-provider-lakefs"
+description="lakefs provider for Artifactum via OpenDAL"
+version.workspace=true
+edition.workspace=true
+rust-version.workspace=true
+license.workspace=true
+[lib]
+name="artifactum_provider_lakefs"
+[[bin]]
+name="artifactum-provider-lakefs"
+path="src/main.rs"
+[dependencies]
+anyhow.workspace=true
+artifactum-provider-opendal={path="../artifactum-provider-opendal"}
+artifactum-plugin-protocol={path="../artifactum-plugin-protocol"}
+opendal={version="0.58",default-features=false,features=["http-transport-reqwest","services-lakefs"]}
+tokio.workspace=true
+[lints]
+workspace=true

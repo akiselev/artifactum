@@ -282,7 +282,25 @@ impl ArtifactStore {
         fs::create_dir_all(self.pins_dir()).await?;
         let body = serde_json::to_vec_pretty(&PinRecord {
             name: name.to_owned(),
-            manifest: manifest.clone(),
+            manifest: Some(manifest.clone()),
+            blobs: Vec::new(),
+        })?;
+        let temp = path.with_extension(format!("{}.partial", Uuid::new_v4()));
+        fs::write(&temp, body).await?;
+        fs::rename(temp, path).await?;
+        Ok(())
+    }
+
+    /// Pin an explicit set of blobs without asserting that a complete artifact
+    /// manifest exists. This keeps lazily fetched subsets reachable by GC.
+    pub async fn pin_blobs(&self, name: &str, blobs: &[Digest]) -> Result<()> {
+        let safe_name = sanitize_pin(name);
+        let path = self.pins_dir().join(format!("{safe_name}.json"));
+        fs::create_dir_all(self.pins_dir()).await?;
+        let body = serde_json::to_vec_pretty(&PinRecord {
+            name: name.to_owned(),
+            manifest: None,
+            blobs: blobs.to_vec(),
         })?;
         let temp = path.with_extension(format!("{}.partial", Uuid::new_v4()));
         fs::write(&temp, body).await?;
@@ -307,7 +325,7 @@ impl ArtifactStore {
                 continue;
             }
             let record: PinRecord = serde_json::from_slice(&fs::read(entry.path()).await?)?;
-            pins.insert(record.name, record.manifest);
+            if let Some(manifest)=record.manifest { pins.insert(record.name, manifest); }
         }
         Ok(pins)
     }
@@ -318,9 +336,18 @@ impl ArtifactStore {
         destination: impl AsRef<Path>,
         mode: MaterializationMode,
     ) -> Result<()> {
+        self.materialize_files(&artifact.files, destination, mode).await
+    }
+
+    pub async fn materialize_files(
+        &self,
+        files: &[StoredFile],
+        destination: impl AsRef<Path>,
+        mode: MaterializationMode,
+    ) -> Result<()> {
         let destination = destination.as_ref();
         fs::create_dir_all(destination).await?;
-        for file in &artifact.files {
+        for file in files {
             let source = self.blob_path(&file.digest)?;
             if !fs::try_exists(&source).await? {
                 return Err(Error::MissingBlob(file.digest.to_string()));
@@ -351,11 +378,16 @@ impl ArtifactStore {
     }
 
     pub async fn gc(&self, dry_run: bool) -> Result<GcReport> {
-        let pins = self.pins().await?;
         let mut reachable = BTreeSet::new();
-        for manifest_digest in pins.values() {
-            let artifact = self.load_manifest(manifest_digest).await?;
-            reachable.extend(artifact.files.into_iter().map(|file| file.digest.value));
+        let mut entries = fs::read_dir(self.pins_dir()).await?;
+        while let Some(entry)=entries.next_entry().await? {
+            if !entry.file_type().await?.is_file(){continue;}
+            let record:PinRecord=serde_json::from_slice(&fs::read(entry.path()).await?)?;
+            reachable.extend(record.blobs.into_iter().map(|digest|digest.value));
+            if let Some(manifest_digest)=record.manifest {
+                let artifact=self.load_manifest(&manifest_digest).await?;
+                reachable.extend(artifact.files.into_iter().map(|file|file.digest.value));
+            }
         }
 
         let blobs_dir = self.blobs_dir();
@@ -390,7 +422,10 @@ impl ArtifactStore {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PinRecord {
     name: String,
-    manifest: Digest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    manifest: Option<Digest>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    blobs: Vec<Digest>,
 }
 
 struct StoreLock {
@@ -497,6 +532,24 @@ mod tests {
 
         assert_eq!(fs::read(&destination).await.unwrap(), b"correct");
         assert!(store.verify_blob(&digest).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn explicit_blob_pins_survive_gc() {
+        let root = tempdir().unwrap();
+        let store = ArtifactStore::open(root.path().join("store")).await.unwrap();
+        let pinned_input = root.path().join("pinned");
+        let garbage_input = root.path().join("garbage");
+        fs::write(&pinned_input, b"keep-me").await.unwrap();
+        fs::write(&garbage_input, b"delete-me").await.unwrap();
+        let (pinned, _) = store.import_file(&pinned_input, None).await.unwrap();
+        let (garbage, _) = store.import_file(&garbage_input, None).await.unwrap();
+        store.pin_blobs("partial-artifact", std::slice::from_ref(&pinned)).await.unwrap();
+
+        let report = store.gc(false).await.unwrap();
+        assert!(store.contains_blob(&pinned).await.unwrap());
+        assert!(!store.contains_blob(&garbage).await.unwrap());
+        assert_eq!(report.blobs_removed, 1);
     }
 
     #[tokio::test]

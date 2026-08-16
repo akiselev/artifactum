@@ -1,0 +1,23 @@
+[package]
+name = "artifactum-provider-zenodo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+[lib]
+name = "artifactum_provider_zenodo"
+[[bin]]
+name = "artifactum-provider-zenodo"
+path = "src/main.rs"
+[dependencies]
+artifactum-core = { path = "../artifactum-core" }
+artifactum-provider-api = { path = "../artifactum-provider-api" }
+artifactum-plugin-protocol = { path = "../artifactum-plugin-protocol" }
+async-trait.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

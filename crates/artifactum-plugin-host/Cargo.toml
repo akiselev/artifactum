@@ -1,0 +1,19 @@
+[package]
+name = "artifactum-plugin-host"
+description = "Daemonkit-backed persistent provider session host for Artifactum"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+[dependencies]
+artifactum-core = { path = "../artifactum-core" }
+artifactum-plugin-protocol = { path = "../artifactum-plugin-protocol" }
+async-trait.workspace = true
+daemonkit = { git = "https://github.com/akiselev/daemonkit", rev = "9f7dc96b343f8c892add1a0fee27ad6f73c15e57" }
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+[lints]
+workspace = true

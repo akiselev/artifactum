@@ -1,7 +1,7 @@
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
 
 use artifactum_core::{
-    provider_error, AcquireContext, Acquisition, ArtifactPath, ArtifactProvider, ArtifactRequirement,
+    provider_error, AcquireContext, AcquisitionPlan, ArtifactPath, ArtifactProvider, ArtifactRequirement,
     Digest, DigestSet, ProviderCapabilities, ProviderDescriptor, ResolveContext, ResolvedFile,
     ResolvedRevision, Resolution, Selection,
 };
@@ -163,39 +163,17 @@ impl ArtifactProvider for GitHubProvider {
         })
     }
 
-    async fn acquire(
+    async fn prepare_acquisition(
         &self,
         file: &ResolvedFile,
-        destination: &Path,
         context: &AcquireContext,
-    ) -> artifactum_core::Result<Acquisition> {
-        if context.offline {
-            return Err(provider_error("github", "cannot acquire a GitHub release asset while offline"));
-        }
-        let api_url = file
-            .source
-            .get("api_url")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| provider_error("github", "resolved file is missing source.api_url"))?;
-        let response = self
-            .authenticated(
-                self.client
-                    .get(api_url)
-                    .header(header::ACCEPT, "application/octet-stream")
-                    .header("X-GitHub-Api-Version", "2022-11-28"),
-            )
-            .send()
-            .await
-            .map_err(|error| provider_error("github", error))?
-            .error_for_status()
-            .map_err(|error| provider_error("github", error))?;
-        let bytes_written = artifactum_transport_http::write_response(response, destination)
-            .await
-            .map_err(|error| provider_error("github", error))?;
-        Ok(Acquisition {
-            bytes_written: Some(bytes_written),
-            metadata: BTreeMap::new(),
-        })
+    ) -> artifactum_core::Result<AcquisitionPlan> {
+        if context.offline { return Err(provider_error("github", "cannot acquire a GitHub release asset while offline")); }
+        let api_url=file.source.get("api_url").and_then(serde_json::Value::as_str)
+            .ok_or_else(||provider_error("github","resolved file is missing source.api_url"))?;
+        let mut headers=BTreeMap::from([(String::from("Accept"),String::from("application/octet-stream")),(String::from("X-GitHub-Api-Version"),String::from("2022-11-28"))]);
+        if let Ok(token)=std::env::var("GITHUB_TOKEN").or_else(|_|std::env::var("GH_TOKEN")){headers.insert("Authorization".into(),format!("Bearer {token}"));}
+        Ok(AcquisitionPlan::Http(artifactum_core::HttpAcquisition{url:api_url.to_owned(),headers,resume:true}))
     }
 }
 

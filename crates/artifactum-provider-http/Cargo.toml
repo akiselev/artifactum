@@ -17,7 +17,6 @@ path = "src/main.rs"
 anyhow.workspace = true
 artifactum-core = { path = "../artifactum-core" }
 artifactum-plugin-protocol = { path = "../artifactum-plugin-protocol" }
-artifactum-transport-http = { path = "../artifactum-transport-http" }
 async-trait.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true

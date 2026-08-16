@@ -1,0 +1,20 @@
+[package]
+name = "artifactum-provider-oci"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+[lib]
+name = "artifactum_provider_oci"
+[[bin]]
+name = "artifactum-provider-oci"
+path = "src/main.rs"
+[dependencies]
+artifactum-core = { path = "../artifactum-core" }
+artifactum-plugin-protocol = { path = "../artifactum-plugin-protocol" }
+async-trait.workspace = true
+oci-client = "0.17"
+serde_json.workspace = true
+tokio.workspace = true
+[lints]
+workspace = true

@@ -1,7 +1,7 @@
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
 
 use artifactum_core::{
-    provider_error, AcquireContext, Acquisition, ArtifactPath, ArtifactProvider, ArtifactRequirement,
+    provider_error, AcquireContext, AcquisitionPlan, ArtifactPath, ArtifactProvider, ArtifactRequirement,
     Digest, DigestSet, ProviderCapabilities, ProviderDescriptor, ResolveContext, ResolvedFile,
     ResolvedRevision, Resolution,
 };
@@ -130,35 +130,15 @@ impl ArtifactProvider for HttpProvider {
         })
     }
 
-    async fn acquire(
+    async fn prepare_acquisition(
         &self,
         file: &ResolvedFile,
-        destination: &Path,
         context: &AcquireContext,
-    ) -> artifactum_core::Result<Acquisition> {
-        if context.offline {
-            return Err(provider_error("http", "cannot acquire an HTTP artifact while offline"));
-        }
-        let url = file
-            .source
-            .get("url")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| provider_error("http", "resolved file is missing source.url"))?;
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|error| provider_error("http", error))?
-            .error_for_status()
-            .map_err(|error| provider_error("http", error))?;
-        let bytes_written = artifactum_transport_http::write_response(response, destination)
-            .await
-            .map_err(|error| provider_error("http", error))?;
-        Ok(Acquisition {
-            bytes_written: Some(bytes_written),
-            metadata: BTreeMap::new(),
-        })
+    ) -> artifactum_core::Result<AcquisitionPlan> {
+        if context.offline { return Err(provider_error("http", "cannot acquire an HTTP artifact while offline")); }
+        let url=file.source.get("url").and_then(serde_json::Value::as_str)
+            .ok_or_else(||provider_error("http","resolved file is missing source.url"))?;
+        Ok(AcquisitionPlan::Http(artifactum_core::HttpAcquisition{url:url.to_owned(),headers:BTreeMap::new(),resume:true}))
     }
 }
 

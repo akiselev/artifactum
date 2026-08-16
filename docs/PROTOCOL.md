@@ -1,158 +1,188 @@
-# Artifactum provider plugin protocol 1.0
+# Artifactum provider protocol 2.0
 
 ## Discovery
 
-The host scans `ARTIFACTUM_PLUGIN_PATH` first and then `PATH` for regular files whose names begin with:
+Executable plugins are named:
 
 ```text
-artifactum-provider-
+artifactum-provider-*
 ```
 
-Windows `.exe` suffixes are ignored when checking the prefix.
-
-The provider process is launched as:
+The host searches `ARTIFACTUM_PLUGIN_PATH` and then `PATH`. A plugin is launched with:
 
 ```text
 artifactum-provider-foo --artifactum-plugin
 ```
 
-stdout is reserved for protocol frames. Provider diagnostics belong on stderr.
+stdout is protocol-only; stderr is diagnostics.
 
 ## Framing
 
-Frames use an LSP-style content length header:
+Provider stdin/stdout use LSP-style framing:
 
 ```text
-Content-Length: 123\r\n
+Content-Length: <bytes>\r\n
 \r\n
-{...123 bytes of UTF-8 JSON...}
+<UTF-8 JSON payload>
 ```
 
-Protocol 1.0 limits an individual frame to 16 MiB in the host implementation.
+Frames are capped at 64 MiB.
 
-## Request shape
+## Concurrency
+
+Protocol 2.0 is session-oriented. Requests have independent numeric IDs and a provider server may process several concurrently. Responses may therefore arrive out of order.
+
+`PluginSession` maintains an ID -> oneshot map and one stdout dispatcher. stdin writes are serialized only long enough to emit a frame.
+
+## Initialization
+
+Host request:
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 1,
   "method": "initialize",
-  "params": {}
-}
-```
-
-Response:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {}
-}
-```
-
-or:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "error": {
-    "code": -32000,
-    "message": "provider error"
+  "params": {
+    "protocol_major": 2,
+    "protocol_minor": 0
   }
 }
 ```
 
-The protocol resembles JSON-RPC but is intentionally defined by Artifactum; clients should not assume support for arbitrary JSON-RPC extensions.
-
-## `initialize`
-
-Request:
-
-```json
-{
-  "protocol_major": 1,
-  "protocol_minor": 0
-}
-```
-
-Response contains the negotiated protocol and provider descriptor:
-
-```json
-{
-  "protocol_major": 1,
-  "protocol_minor": 0,
-  "provider": {
-    "name": "huggingface",
-    "version": "0.1.0",
-    "schemes": ["huggingface", "hf"],
-    "capabilities": {
-      "resolve": true,
-      "acquire": true,
-      "search": true,
-      "list": true,
-      "versions": true,
-      "push": false,
-      "auth": true,
-      "range": true
-    },
-    "metadata": {}
-  }
-}
-```
+The response includes negotiated protocol numbers and `ProviderDescriptor`.
 
 Major versions must match. Minor versions are additive within a major version.
 
-## `resolve`
+## Methods
 
-Parameters:
+### `initialize`
 
-```json
-{
-  "requirement": {
-    "reference": {"scheme":"hf","locator":"owner/model@main"},
-    "revision": null,
-    "selection": {"include":[],"exclude":[]},
-    "metadata": {}
-  },
-  "context": {
-    "offline": false,
-    "environment": {}
-  }
+Returns provider name, version, schemes, capabilities, and metadata.
+
+### `resolve`
+
+Input:
+
+```text
+ArtifactRequirement + ResolveContext
+```
+
+Output:
+
+```text
+Resolution
+```
+
+### `prepare_acquisition`
+
+Input:
+
+```text
+ResolvedFile + AcquireContext
+```
+
+Output:
+
+```text
+AcquisitionPlan
+```
+
+This operation must not write bytes. It may mint temporary transport information, evaluate current credentials, or select provider-native acquisition.
+
+### `acquire_managed`
+
+Used only when the returned plan requires provider execution. Input contains:
+
+```text
+ResolvedFile + AcquisitionPlan + host-owned staging path + AcquireContext
+```
+
+The provider writes exactly the requested file into the staging path. The host hashes and verifies it afterward.
+
+### `search`
+
+Returns:
+
+```rust
+SearchPage {
+    items,
+    next_cursor,
 }
 ```
 
-The result is `artifactum_core::Resolution` serialized with Serde.
+### `inspect`
 
-## `acquire`
+Returns provider-specific catalog metadata normalized into `InspectResult`.
 
-Parameters contain a `ResolvedFile`, a host-owned staging path, and an `AcquireContext`.
+### `versions`
 
-The provider must:
+Returns paginated `VersionPage` for providers that support version enumeration.
 
-1. create/truncate the destination;
-2. write the complete file;
-3. flush/sync as appropriate;
-4. return only after acquisition is complete.
+### `files`
 
-The host then hashes and commits the staging file. The provider must never infer or construct a CAS path.
+Returns paginated `FilePage` without requiring full artifact acquisition.
 
-## `search`
+## Capabilities
 
-Optional. Parameters contain a `SearchRequest` and `ResolveContext`; result is a list of `SearchResult` values.
+`ProviderCapabilities` advertises operations independently:
 
-## Planned protocol 1.x additions
+```text
+resolve
+acquire
+search
+inspect
+list
+versions
+push
+ auth
+range
+```
 
-The framing and request IDs intentionally leave room for:
+An unsupported optional operation returns the core `Unsupported` error.
 
-- persistent plugin sessions;
-- multiple concurrent requests;
-- `$/cancelRequest`-style cancellation;
-- progress notifications;
-- rate-limit notifications;
-- explicit authentication requests;
-- range/resume acquisition negotiation;
-- provider-specific CLI command descriptions;
-- push/upload operations;
-- version enumeration and metadata listing.
+## Structured errors
+
+Provider errors can include a serialized `AccessChallenge`. The plugin host preserves this payload across both protocol hops:
+
+```text
+provider process
+  -> Artifactum provider protocol
+  -> daemon host protocol
+  -> CLI/application
+```
+
+This allows callers to distinguish authentication, gated/manual access, terms/license requirements, membership, and a missing external vendor tool.
+
+## Persistent cross-invocation host
+
+The provider protocol remains ordinary subprocess RPC. A separate daemonkit-backed host owns process persistence:
+
+```text
+CLI -> daemonkit AuthenticatedStream -> plugin host -> PluginSession -> provider
+```
+
+Host framing is intentionally private/internal and currently consists of one length-prefixed JSON `HostRequest` and `HostResponse` per authenticated connection. daemonkit supplies transport authentication and lifecycle; Artifactum supplies this small application protocol.
+
+The host pools one `PluginSession` per executable. A dead transport/protocol session is removed and respawned once. Provider-originated remote errors are not retried as crashes.
+
+## Security properties
+
+- Provider plugins never receive CAS paths.
+- Managed acquisition receives only a random staging path.
+- Credentials should not appear in durable `Resolution` source state.
+- Host-executed HTTP plans may contain ephemeral auth headers; plans are not lockfile state.
+- stdout is reserved for protocol frames, preventing diagnostics from corrupting framing.
+- daemonkit authenticates the local host stream and validates private bootstrap mode.
+
+## Future additive methods
+
+Not implemented in 0.3:
+
+- cancellation notifications;
+- progress/rate-limit notifications;
+- push/publish;
+- plugin command descriptions;
+- trust/permission manifests;
+- streaming plan handoff between host and provider;
+- extractor/transform/verifier protocols.

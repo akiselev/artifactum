@@ -1,181 +1,232 @@
 # Artifactum architecture
 
-## Invariants
+## Core invariants
 
-Artifactum is designed around a few invariants rather than provider-specific download behavior.
+1. The Artifactum host owns content identity. Providers never choose CAS paths.
+2. Resolution and acquisition are distinct. Mutable semantic names are resolved before bytes move.
+3. `ResolvedFile::source` is stable provider-owned reacquisition state, not a place for live credentials.
+4. Every acquired file is written to a host-created staging path and SHA-256 hashed by the host before CAS commit.
+5. Partial acquisition is valid state. A resolved artifact may have zero, some, or all blobs locally.
+6. A complete stored manifest exists only when every resolved file has a verified CAS blob.
+7. Provider profiles are part of acquisition identity and are preserved by lockfiles.
+8. Static providers and external provider processes expose the same `ArtifactProvider` abstraction.
+9. Provider process lifetime is an implementation concern below the resolver; daemonkit owns persistent CLI sessions.
+10. Provider capabilities are additive. Search/inspect/version/file listing may be unsupported independently.
 
-1. The core owns artifact identity.
-2. Providers never commit blobs into the CAS.
-3. A provider reference is opaque beyond its leading scheme.
-4. Resolution and acquisition are separate operations.
-5. Credentials are runtime inputs, never durable artifact identity.
-6. A lockfile records enough provider-owned state to reacquire a resolved artifact without re-resolving mutable names.
-7. The subprocess protocol and in-process trait expose the same conceptual operations.
-8. Provider crates are independently versioned and installable; the main CLI does not accumulate one Cargo feature per provider.
-
-## Data flow
+## Layers
 
 ```text
-ArtifactRequirement
-        │
-        ▼
- ArtifactProvider::resolve
-        │
-        ▼
-    Resolution
-        │
-        │ one ResolvedFile at a time
-        ▼
- ArtifactProvider::acquire
-        │
-        ▼
- host-owned staging path
-        │
-        ▼
- SHA-256 + integrity check
-        │
-        ▼
-      CAS blob
-        │
-        ▼
-  StoredArtifact manifest
-        │
-        ├── pin / GC reachability
-        │
-        └── materialize ordinary tree
+                 project/application
+                        │
+                        ▼
+                 ArtifactResolver
+                        │
+          ┌─────────────┴─────────────┐
+          │                           │
+   linked providers          daemon plugin providers
+                                  │
+                                  ▼
+                         daemonkit plugin host
+                                  │
+                         multiplexed sessions
+                                  │
+                                  ▼
+                        provider executables
+          └─────────────┬─────────────┘
+                        ▼
+                    Resolution
+                        │
+                        ▼
+                AcquisitionPlan
+                        │
+         ┌──────────────┼──────────────┐
+         ▼              ▼              ▼
+      host HTTP      LocalCopy    ProviderManaged
+                                      │
+                         OpenDAL / OCI / Git / vendor CLI
+         └──────────────┬──────────────┘
+                        ▼
+                 staging file
+                        │
+                  host SHA-256
+                        │
+                        ▼
+                       CAS
+                        │
+              ┌─────────┴─────────┐
+              ▼                   ▼
+          partial pin      complete manifest
+                                  │
+                                  ▼
+                            materialization
 ```
 
-A `Resolution` is provider-facing. It can contain provider-specific source state required for reacquisition. A `StoredArtifact` is store-facing: it contains only safe artifact paths and host-computed CAS identities.
+## Requirement, resolution, acquisition
 
-## Core provider API
-
-The essential API is intentionally narrow:
+`ArtifactRequirement` is mutable project intent:
 
 ```rust
-#[async_trait]
-pub trait ArtifactProvider: Send + Sync + 'static {
-    fn descriptor(&self) -> ProviderDescriptor;
-
-    async fn resolve(
-        &self,
-        requirement: &ArtifactRequirement,
-        context: &ResolveContext,
-    ) -> Result<Resolution>;
-
-    async fn acquire(
-        &self,
-        file: &ResolvedFile,
-        destination: &Path,
-        context: &AcquireContext,
-    ) -> Result<Acquisition>;
-
-    async fn search(
-        &self,
-        request: &SearchRequest,
-        context: &ResolveContext,
-    ) -> Result<Vec<SearchResult>>;
+ArtifactRequirement {
+    reference,
+    revision,
+    selection,
+    metadata,
 }
 ```
 
-`search` has a default `Unsupported` implementation. Provider capabilities advertise optional behavior to callers.
+`Resolution` is the provider's concrete interpretation:
 
-## Static and plugin providers
-
-A provider crate contains its implementation in a normal Rust library:
-
-```text
-artifactum-provider-huggingface/
-├── src/lib.rs       # HuggingFaceProvider: ArtifactProvider
-└── src/main.rs      # artifactum_plugin_protocol::serve(provider)
+```rust
+Resolution {
+    provider,
+    canonical_ref,
+    revision,
+    files,
+    provider_state,
+    metadata,
+}
 ```
 
-Applications that need a fixed provider set link the library directly. The generic Artifactum CLI discovers the executable on `PATH` and wraps it in `PluginProvider`, which itself implements `ArtifactProvider`. Code above the registry is therefore agnostic about the boundary.
+Each `ResolvedFile` contains an artifact-relative path, optional upstream size/digests/media type, and opaque reacquisition source state.
 
-There is intentionally no `cdylib` plugin ABI. Rust has no stable language ABI for this use case, and a subprocess boundary permits provider implementations to evolve independently.
+The provider then produces an `AcquisitionPlan`:
 
-## Why the provider owns reacquisition state
-
-A generic transport URL is often the wrong durable identity. A service may return a temporary signed URL or select a storage backend dynamically. Therefore `ResolvedFile::source` is opaque provider state.
-
-Examples:
-
-```json
-{"bucket":"models","key":"foo/model.onnx","version_id":"abc"}
+```rust
+pub enum AcquisitionPlan {
+    Http(HttpAcquisition),
+    LocalCopy { source: PathBuf },
+    ObjectStore(ObjectStoreAcquisition),
+    Git(GitAcquisition),
+    Oci(OciAcquisition),
+    ProviderManaged { state: serde_json::Value },
+}
 ```
 
-or:
+The enum deliberately has more generic plan variants than the current host executes. HTTP and local copy are fully host-executed today. OpenDAL/OCI/Git providers currently use `ProviderManaged` where keeping service-specific dependencies inside independently installable provider crates is preferable to putting every backend into the main binary.
 
-```json
-{"asset_id":12345,"api_url":"https://api.github.com/repos/.../assets/12345"}
+## Provider profiles
+
+A project can define named provider instances:
+
+```toml
+[providers.lab]
+kind = "s3"
+endpoint = "https://minio.internal"
+bucket = "models"
+
+[artifacts.foo]
+source = "lab:path/to/foo.bin"
 ```
 
-The provider can later turn that identity into whatever temporary transport operation is necessary. The current first-party providers use ordinary URLs where those URLs are durable enough, but the type boundary does not require that.
+The resolver routes scheme `lab` to provider kind `s3`, rewrites the request for that provider, and injects `ProviderProfile { name: "lab", ... }` into resolve/acquire contexts. The resolved metadata records `artifactum_profile = "lab"`; `Artifacts.lock` preserves it.
 
-The generic HTTP provider is an explicit escape hatch: its URL is the durable identity. Artifactum cannot infer whether an arbitrary query parameter is a credential, so projects must not put presigned/signed URLs or embedded credentials in direct HTTP requirements intended for source control. Semantic providers should instead persist stable IDs and mint temporary URLs only during `acquire`.
+This lets multiple instances of the same provider coexist without separate binaries or Cargo features.
 
-## Lockfiles
+## Lazy acquisition
 
-`Artifacts.toml` is mutable project intent. `Artifacts.lock` is resolved state.
+Resolution does not imply acquisition. `ResolvedArtifact` exposes:
 
-The lockfile stores:
+```rust
+ensure_file(path)
+ensure_matching(globs)
+ensure_all()
+```
+
+The resolver uses a bounded `buffer_unordered` scheduler. Each selected file is independently checked against the CAS, planned/acquired when missing, verified, and committed.
+
+A `PartialFetch` contains the resolution plus only the newly/known acquired `StoredFile`s. `finalize_cached()` checks every resolved file against the CAS; if all are present it writes the complete `StoredArtifact` manifest.
+
+## Lockfile merging
+
+The lockfile can retain file-level CAS identities across separate lazy fetches. Previous file digests are reusable only when all of these match:
 
 - provider name;
 - canonical reference;
 - resolved revision;
-- stored manifest SHA-256;
-- a SHA-256 fingerprint of the originating project requirement, used to reject stale `--locked` fetches;
-- each artifact path;
-- each host-computed SHA-256;
-- byte size;
-- media type when available;
-- provider-owned reacquisition state, encoded as opaque JSON text so TOML cannot narrow the provider value model.
+- provider profile.
 
-`requirement_digest` fingerprints the complete serialized `ArtifactRequirement` (source, explicit revision, selection and metadata). This intentionally treats even semantically harmless manifest edits such as include-order changes as lockfile drift.
+This prevents a mutable tag/branch update from reusing stale file identities.
 
-`artifactum fetch --locked` reconstructs a `Resolution` from the lockfile and skips semantic resolution. Existing blobs are reused. Missing blobs are reacquired from the provider and verified against the locked digest.
+`requirement_digest` separately detects drift in project intent for `--locked` operation.
 
-`--frozen` sets both locked and offline behavior, requiring all locked blobs to already exist.
+## CAS and partial GC roots
 
-## CAS and manifests
+Complete artifacts are pinned by stored-manifest digest. Partial artifacts are pinned by explicit blob digests:
 
-Blob paths are derived only from SHA-256:
-
-```text
-blobs/sha256/<first-two-hex>/<full-hex>
+```json
+{
+  "name": "project:artifact",
+  "manifest": null,
+  "blobs": [
+    {"algorithm":"sha256","value":"..."}
+  ]
+}
 ```
 
-Stored artifact manifests are serialized as deterministic struct-shaped JSON and are themselves SHA-256 addressed under `manifests/sha256/`.
+GC traverses both forms. Once an artifact becomes complete, its pin can point to the manifest instead.
 
-Pins refer to manifest digests. GC computes the set of blob digests reachable from pinned manifests and removes everything else.
+## Persistent plugin process model
 
-The current GC is intentionally simple. Future versions should also retain manifests referenced by explicit leases, active project roots, and potentially a configurable recent-use window.
+Provider binaries still implement the ordinary Artifactum protocol and know nothing about daemonkit.
 
-## Materialization
+The main CLI uses `artifactum-plugin-host`:
 
-The CAS is not an application-facing filesystem layout. `materialize` reconstructs a tree from a `StoredArtifact`.
+```text
+CLI invocation A ─┐
+CLI invocation B ─┼─ daemonkit authenticated stream ─> Artifactum host daemon
+CLI invocation C ─┘                                      │
+                                                         ├─ hf plugin session
+                                                         ├─ s3 plugin session
+                                                         └─ kaggle plugin session
+```
 
-Current modes:
+The host uses daemonkit's embedded-service mode. daemonkit owns instance identity, startup serialization, authenticated local transport, generation changes, stale-state repair, shutdown, and process lifecycle. Artifactum owns only its host request framing and provider-session pool.
 
-- `hardlink`
-- `copy`
-- `auto` (hardlink then copy)
+Provider sessions support concurrent request IDs. A provider process crash/EOF/protocol failure evicts that session and causes one respawn/retry; provider-domain errors are returned unchanged.
 
-Planned modes:
+The daemon has a 30-minute idle timeout. Provider child processes use Tokio `kill_on_drop` so daemon teardown releases them.
 
-- reflink / clonefile;
-- symlink as an explicit opt-in;
-- read-only materializations;
-- atomic whole-tree swaps.
+## Credentials and access
+
+Credentials are runtime inputs. First-party semantic HTTP providers store only durable URLs/IDs in `ResolvedFile::source`; `prepare_acquisition` reconstructs headers from the active profile/environment.
+
+Access failures can carry:
+
+```rust
+AccessChallenge {
+    provider,
+    requirement: Authentication | LicenseAcceptance | TermsAcceptance |
+                 Membership | ManualApproval | ExternalTool,
+    message,
+    action_url,
+    tool,
+}
+```
+
+The plugin protocol transports this structured value rather than flattening it into a string.
+
+## OpenDAL provider SDK
+
+Storage plugins share `artifactum-provider-opendal`. A thin provider chooses:
+
+- Artifactum name/schemes;
+- OpenDAL service scheme;
+- locator interpretation (`Path` or authority + path);
+- optional backend-default config;
+- whether explicit object versions should use OpenDAL version-aware stat/read.
+
+Provider profile config is merged at runtime and `${ENV}` values are expanded only when constructing the backend. Direct authority-bearing references persist only non-secret authority identity required for locked reacquisition.
 
 ## Provider vs transport vs extractor
 
-These should remain separate concepts.
+Artifactum keeps these concepts separate:
 
-- **Provider**: understands semantic identity and revisions (`huggingface`, `github`, `wandb`, `mlflow`).
-- **Transport**: moves bytes (`HTTP`, `S3`, `OCI`, `Git`, provider-native Xet).
-- **Extractor**: interprets containers (`tar`, `zip`, `7z`).
-- **Transform**: derives another artifact (`ONNX optimization`, `GGUF conversion`, model sharding).
-- **Store**: owns content identity and persistence.
-- **Resolver**: orchestrates the graph.
+- **provider** — semantic identity, versions, catalog metadata;
+- **transport/acquisition plan** — how bytes move;
+- **store** — content identity and persistence;
+- **resolver** — orchestration;
+- **extractor** — future container interpretation (`tar`, `zip`, `zstd`);
+- **transform** — future reproducible derived artifacts (`GGUF`, ONNX optimization, sharding);
+- **verifier** — future provenance/signature policy.
 
-The first implementation ships provider plugins plus a shared `artifactum-transport-http` crate used by HTTP-backed providers. Extractor/transform plugins should reuse the same dual library/executable pattern but use a separate capability protocol rather than pretending an archive is a remote provider.
+Provider waves 1–3 are implemented here. Extractor/transform/provenance graphs remain a later layer rather than being encoded as providers.

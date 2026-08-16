@@ -1,110 +1,163 @@
-# Writing an Artifactum provider
-
-A provider package should expose the implementation as a library and the same implementation through an executable plugin.
+# Authoring an Artifactum provider
 
 ## Package shape
+
+A concrete provider should normally be one package with a library and plugin executable:
+
+```text
+artifactum-provider-example/
+├── Cargo.toml
+└── src/
+    ├── lib.rs
+    └── main.rs
+```
 
 ```toml
 [package]
 name = "artifactum-provider-example"
 
-[lib]
-name = "artifactum_provider_example"
-
-[[bin]]
-name = "artifactum-provider-example"
-path = "src/main.rs"
+[dependencies]
+artifactum-core = { path = "../artifactum-core" }
+artifactum-plugin-protocol = { path = "../artifactum-plugin-protocol" }
+async-trait = "0.1"
 ```
 
-The library depends on `artifactum-core`. The binary additionally depends on `artifactum-plugin-protocol`.
-
-## Implement the trait
-
-```rust
-use artifactum_core::{ArtifactProvider, ProviderDescriptor};
-
-pub struct ExampleProvider;
-
-#[async_trait::async_trait]
-impl ArtifactProvider for ExampleProvider {
-    fn descriptor(&self) -> ProviderDescriptor {
-        // Advertise a globally sensible provider name and one or more schemes.
-        todo!()
-    }
-
-    async fn resolve(&self, requirement: &ArtifactRequirement, cx: &ResolveContext)
-        -> artifactum_core::Result<Resolution>
-    {
-        todo!()
-    }
-
-    async fn acquire(&self, file: &ResolvedFile, destination: &Path, cx: &AcquireContext)
-        -> artifactum_core::Result<Acquisition>
-    {
-        todo!()
-    }
-}
-```
-
-The core treats the portion after `<scheme>:` as opaque. Provider authors should therefore define reference syntax in their own README rather than trying to extend a central parser.
-
-## Binary adapter
+`main.rs` should be nearly trivial:
 
 ```rust
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let provider = ExampleProvider::new();
-    if std::env::args().any(|arg| arg == artifactum_plugin_protocol::PLUGIN_MODE_FLAG) {
-        artifactum_plugin_protocol::serve(provider).await?;
-    } else {
-        println!("{}", serde_json::to_string_pretty(&provider.descriptor())?);
-    }
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    artifactum_plugin_protocol::serve(
+        artifactum_provider_example::provider()
+    ).await?;
     Ok(())
 }
 ```
 
-This keeps the library and plugin behavior on exactly the same implementation.
+Use the common plugin-mode adapter rather than writing protocol framing manually.
+
+## Provider trait
+
+Implement `ArtifactProvider` with the smallest capability surface the backend genuinely supports.
+
+Required conceptual operations:
+
+```rust
+fn descriptor(&self) -> ProviderDescriptor;
+async fn resolve(...) -> Result<Resolution>;
+async fn prepare_acquisition(...) -> Result<AcquisitionPlan>;
+```
+
+If `prepare_acquisition` returns a provider-managed plan, implement `acquire_managed`.
+
+Optional operations:
+
+```text
+search
+inspect
+list_versions
+list_files
+```
+
+Do not advertise capabilities whose methods just return fabricated data.
 
 ## Resolution rules
 
-A good `resolve` implementation should:
+`resolve()` should do semantic work, not byte transfer:
 
-- turn mutable names (`main`, `latest`, aliases, stages) into the strongest provider-native immutable revision available;
-- enumerate only files selected by `ArtifactRequirement::selection` when the remote API permits it;
-- populate `size` without downloading contents when possible;
-- populate SHA-256 if the provider exposes a trustworthy one;
-- put only non-secret, durable reacquisition identity in `ResolvedFile::source`;
-- avoid signed URLs, bearer tokens, cookies, and other expiring credentials in durable state;
-- make `canonical_ref` sufficiently precise for diagnostics and lockfiles.
+- turn mutable names into immutable revision IDs where the upstream permits it;
+- enumerate/select artifact files;
+- capture size/media type;
+- retain trustworthy upstream digests;
+- put only durable reacquisition state into `ResolvedFile::source`;
+- put whole-artifact provider state into `Resolution::provider_state`.
 
-A provider does **not** need to calculate a digest when the upstream service does not expose one. Artifactum computes SHA-256 after acquisition and writes that digest into the lockfile.
+Never put live bearer tokens, cookies, API keys, presigned URLs with short expiry, or other credentials into source/provider state that will be serialized into `Artifacts.lock`.
 
-## Acquisition rules
+## Acquisition plans
 
-`acquire` owns only the staging destination it receives. It must not:
+Prefer a generic plan when practical:
 
-- write elsewhere in the Artifactum store;
-- create its own CAS identity;
-- trust a remote checksum as proof that the host received those bytes;
-- persist credentials in source metadata.
+```rust
+AcquisitionPlan::Http(...)
+AcquisitionPlan::LocalCopy(...)
+```
 
-Resumable acquisition can later be negotiated by protocol capability. In protocol 1.0, a provider should treat the destination as a fresh staging file.
+This lets the Artifactum host own retries, staging, and policy.
 
-## Authentication
+Use `ProviderManaged` when the transfer needs provider-specific dependencies or behavior that should remain outside the main host binary. Current examples are OpenDAL services, OCI, Git/LFS, and vendor CLI bridges.
 
-First-party provider implementations currently read conventional environment variables (`HF_TOKEN`, `GITHUB_TOKEN` / `GH_TOKEN`). Future host-mediated credential requests should preserve the same principle: credentials are runtime capabilities, not artifact identity.
+Even managed providers only receive a host-owned staging path. They must never construct/write a CAS location.
 
-## Conformance tests to add next
+## Provider profiles
 
-The workspace should grow a reusable provider test harness covering:
+`ResolveContext.profile` / `AcquireContext.profile` contain the named instance that routed the reference.
 
-- descriptor validity and unique schemes;
-- mutable -> immutable resolution;
-- selection include/exclude behavior;
-- deterministic resolution;
-- missing revision/file errors;
-- authentication failures;
-- acquisition into an arbitrary host path;
-- integrity mismatch handling by the host;
+Profiles are ideal for:
+
+- endpoints;
+- bucket/container/repository names;
+- tenant/workspace IDs;
+- credential *environment-variable names*;
+- non-secret service configuration.
+
+If profile values refer to secrets, prefer references such as `${MY_TOKEN}` or `token_env = "MY_TOKEN"` rather than literal secret bytes.
+
+## Structured access errors
+
+Use `AccessChallenge` when user/actionable state blocks resolution/acquisition.
+
+Examples:
+
+```rust
+AccessRequirement::Authentication
+AccessRequirement::LicenseAcceptance
+AccessRequirement::TermsAcceptance
+AccessRequirement::Membership
+AccessRequirement::ManualApproval
+AccessRequirement::ExternalTool
+```
+
+This is preferable to `provider_error("HTTP 403")` or `No such file or directory` for a missing vendor executable.
+
+## SDK choices
+
+### OpenDAL-backed storage
+
+Use `artifactum-provider-opendal` when the provider is fundamentally a storage backend. Keep the concrete crate thin and enable only its OpenDAL service feature.
+
+### Official client bridge
+
+Use `artifactum-provider-command` when an installed official/vendor client already provides the correct auth/storage semantics. The SDK provides tool detection, temp directories, checked commands, selection helpers, and structured `ExternalTool` requirements.
+
+### REST/JSON catalog
+
+Use `artifactum-provider-api` for semantic APIs that eventually produce ordinary HTTP file acquisition. It provides:
+
+- shared reqwest client;
+- profile token/env helpers;
+- header application;
+- auth-status normalization;
+- percent encoding;
+- HTTP acquisition-plan construction.
+
+## Concurrency
+
+Provider protocol 2.0 may call a provider concurrently. Implementations must therefore be `Send + Sync` and avoid global mutable state without synchronization.
+
+Do not assume request-response order on stdout; the server adapter handles request IDs and output serialization.
+
+## Provider conformance expectations
+
+At minimum test:
+
+- reference parsing;
+- mutable -> immutable revision resolution where applicable;
+- include/exclude selection;
+- profile routing/config;
+- locked reacquisition state roundtrip;
+- missing auth/access behavior;
 - offline behavior;
-- plugin/in-process behavior equivalence.
+- malformed provider source state;
+- acquisition integrity mismatch handled by the host;
+- multiple concurrent requests if the provider holds mutable/session state.

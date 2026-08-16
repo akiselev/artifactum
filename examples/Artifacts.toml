@@ -1,4 +1,16 @@
-version = 1
+version = 2
+
+[providers.lab]
+kind = "s3"
+endpoint = "https://minio.example.internal"
+bucket = "models"
+access_key_id = "${LAB_S3_ACCESS_KEY}"
+secret_access_key = "${LAB_S3_SECRET_KEY}"
+
+[providers.gitlab_work]
+kind = "gitlab"
+api_base = "https://gitlab.example.internal/api/v4"
+token_env = "GITLAB_WORK_TOKEN"
 
 [artifacts.embedding]
 source = "huggingface:BAAI/bge-small-en-v1.5@main"
@@ -12,5 +24,9 @@ materialize = ".artifactum/embedding"
 [artifacts.release_asset]
 source = "github:BurntSushi/ripgrep@14.1.1#asset=ripgrep-*-x86_64-unknown-linux-musl.tar.gz"
 
-[artifacts.fixture]
-source = "local:./fixtures/model"
+[artifacts.private_model]
+source = "lab:production/reranker/model.onnx"
+
+[artifacts.internal_source]
+source = "gitlab_work:team/models#weights/model.onnx"
+revision = "main"

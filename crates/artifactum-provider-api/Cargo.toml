@@ -1,0 +1,14 @@
+[package]
+name = "artifactum-provider-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+[dependencies]
+artifactum-core = { path = "../artifactum-core" }
+reqwest.workspace = true
+serde_json.workspace = true
+url.workspace = true
+percent-encoding.workspace = true
+[lints]
+workspace = true

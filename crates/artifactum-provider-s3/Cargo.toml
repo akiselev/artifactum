@@ -1,0 +1,20 @@
+[package]
+name="artifactum-provider-s3"
+description="s3 provider for Artifactum via OpenDAL"
+version.workspace=true
+edition.workspace=true
+rust-version.workspace=true
+license.workspace=true
+[lib]
+name="artifactum_provider_s3"
+[[bin]]
+name="artifactum-provider-s3"
+path="src/main.rs"
+[dependencies]
+anyhow.workspace=true
+artifactum-provider-opendal={path="../artifactum-provider-opendal"}
+artifactum-plugin-protocol={path="../artifactum-plugin-protocol"}
+opendal={version="0.58",default-features=false,features=["http-transport-reqwest","services-s3"]}
+tokio.workspace=true
+[lints]
+workspace=true

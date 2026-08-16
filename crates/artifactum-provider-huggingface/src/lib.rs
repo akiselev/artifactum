@@ -1,9 +1,9 @@
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
 
 use artifactum_core::{
-    provider_error, AcquireContext, Acquisition, ArtifactPath, ArtifactProvider, ArtifactRef,
+    access_required, provider_error, AccessRequirement, AcquireContext, AcquisitionPlan, ArtifactPath, ArtifactProvider, ArtifactRef,
     ArtifactRequirement, Digest, DigestSet, ProviderCapabilities, ProviderDescriptor, ResolveContext,
-    ResolvedFile, ResolvedRevision, Resolution, SearchRequest, SearchResult,
+    ResolvedFile, ResolvedRevision, Resolution, SearchPage, SearchRequest, SearchResult,
 };
 use async_trait::async_trait;
 use reqwest::{header, Client, RequestBuilder};
@@ -107,7 +107,6 @@ impl ArtifactProvider for HuggingFaceProvider {
                 acquire: true,
                 search: true,
                 list: true,
-                versions: true,
                 auth: true,
                 range: true,
                 ..ProviderCapabilities::default()
@@ -127,16 +126,21 @@ impl ArtifactProvider for HuggingFaceProvider {
         let parsed = ParsedReference::parse(requirement.reference.locator(), requirement.revision.as_deref())?;
         let requested_revision = parsed.revision.clone().unwrap_or_else(|| "main".to_owned());
         let info_url = self.api_info_url(parsed.repo_type, &parsed.repo, &requested_revision)?;
-        let info: RepoInfo = self
+        let info_response = self
             .authenticated(self.client.get(info_url))
             .send()
             .await
-            .map_err(|error| provider_error("huggingface", error))?
-            .error_for_status()
-            .map_err(|error| provider_error("huggingface", error))?
-            .json()
-            .await
             .map_err(|error| provider_error("huggingface", error))?;
+        let status = info_response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(access_required("huggingface", AccessRequirement::Authentication, "Hugging Face authentication is required", None));
+        }
+        if status == reqwest::StatusCode::FORBIDDEN {
+            return Err(access_required("huggingface", AccessRequirement::ManualApproval, "repository access is gated; authentication, license/terms acceptance, organization membership, or manual approval may be required", Some(format!("https://huggingface.co/{}", parsed.repo))));
+        }
+        let info: RepoInfo = info_response.error_for_status()
+            .map_err(|error| provider_error("huggingface", error))?
+            .json().await.map_err(|error| provider_error("huggingface", error))?;
         let resolved_revision = info.sha.unwrap_or_else(|| requested_revision.clone());
         let selection = requirement.selection.compile()?;
         let mut files = Vec::new();
@@ -199,41 +203,24 @@ impl ArtifactProvider for HuggingFaceProvider {
         })
     }
 
-    async fn acquire(
+    async fn prepare_acquisition(
         &self,
         file: &ResolvedFile,
-        destination: &Path,
         context: &AcquireContext,
-    ) -> artifactum_core::Result<Acquisition> {
-        if context.offline {
-            return Err(provider_error("huggingface", "cannot acquire a Hub file while offline"));
-        }
-        let url = file
-            .source
-            .get("url")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| provider_error("huggingface", "resolved file is missing source.url"))?;
-        let response = self
-            .authenticated(self.client.get(url))
-            .send()
-            .await
-            .map_err(|error| provider_error("huggingface", error))?
-            .error_for_status()
-            .map_err(|error| provider_error("huggingface", error))?;
-        let bytes_written = artifactum_transport_http::write_response(response, destination)
-            .await
-            .map_err(|error| provider_error("huggingface", error))?;
-        Ok(Acquisition {
-            bytes_written: Some(bytes_written),
-            metadata: BTreeMap::new(),
-        })
+    ) -> artifactum_core::Result<AcquisitionPlan> {
+        if context.offline { return Err(provider_error("huggingface", "cannot acquire a Hub file while offline")); }
+        let url=file.source.get("url").and_then(serde_json::Value::as_str)
+            .ok_or_else(||provider_error("huggingface","resolved file is missing source.url"))?;
+        let mut headers=BTreeMap::new(); if let Ok(token)=std::env::var("HF_TOKEN"){headers.insert("Authorization".into(),format!("Bearer {token}"));}
+        Ok(AcquisitionPlan::Http(artifactum_core::HttpAcquisition{url:url.to_owned(),headers,resume:true}))
     }
+
 
     async fn search(
         &self,
         request: &SearchRequest,
         context: &ResolveContext,
-    ) -> artifactum_core::Result<Vec<SearchResult>> {
+    ) -> artifactum_core::Result<SearchPage> {
         if context.offline {
             return Err(provider_error("huggingface", "cannot search the Hub while offline"));
         }
@@ -265,20 +252,10 @@ impl ArtifactProvider for HuggingFaceProvider {
             .await
             .map_err(|error| provider_error("huggingface", error))?;
 
-        results
-            .into_iter()
-            .map(|result| {
-                Ok(SearchResult {
-                    reference: ArtifactRef::new(
-                        "huggingface",
-                        format!("{}{}", repo_type.reference_prefix(), result.id),
-                    )?,
-                    name: result.id,
-                    description: None,
-                    metadata: BTreeMap::new(),
-                })
-            })
-            .collect()
+        let items=results.into_iter().map(|result| {
+            Ok(SearchResult { reference: ArtifactRef::new("huggingface",format!("{}{}",repo_type.reference_prefix(),result.id))?, name:result.id, description:None, metadata:BTreeMap::new() })
+        }).collect::<artifactum_core::Result<Vec<_>>>()?;
+        Ok(SearchPage { items, next_cursor: None })
     }
 }
 

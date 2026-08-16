@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, path::{Path, PathBuf}};
 
 use artifactum_core::{
-    provider_error, AcquireContext, Acquisition, ArtifactPath, ArtifactProvider, ArtifactRequirement,
+    provider_error, AcquireContext, AcquisitionPlan, ArtifactPath, ArtifactProvider, ArtifactRequirement,
     Digest, DigestSet, ProviderCapabilities, ProviderDescriptor, ResolveContext, ResolvedFile,
     ResolvedRevision, Resolution,
 };
@@ -94,25 +94,14 @@ impl ArtifactProvider for LocalProvider {
         })
     }
 
-    async fn acquire(
+    async fn prepare_acquisition(
         &self,
         file: &ResolvedFile,
-        destination: &Path,
-        context: &AcquireContext,
-    ) -> artifactum_core::Result<Acquisition> {
-        let _ = context;
-        let source = file
-            .source
-            .get("path")
-            .and_then(serde_json::Value::as_str)
+        _context: &AcquireContext,
+    ) -> artifactum_core::Result<AcquisitionPlan> {
+        let source = file.source.get("path").and_then(serde_json::Value::as_str)
             .ok_or_else(|| provider_error("local", "resolved file is missing source.path"))?;
-        let bytes = fs::copy(source, destination)
-            .await
-            .map_err(|error| provider_error("local", error))?;
-        Ok(Acquisition {
-            bytes_written: Some(bytes),
-            metadata: BTreeMap::new(),
-        })
+        Ok(AcquisitionPlan::LocalCopy { path: PathBuf::from(source) })
     }
 }
 

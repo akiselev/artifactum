@@ -1,0 +1,20 @@
+[package]
+name="artifactum-provider-webhdfs"
+description="webhdfs provider for Artifactum via OpenDAL"
+version.workspace=true
+edition.workspace=true
+rust-version.workspace=true
+license.workspace=true
+[lib]
+name="artifactum_provider_webhdfs"
+[[bin]]
+name="artifactum-provider-webhdfs"
+path="src/main.rs"
+[dependencies]
+anyhow.workspace=true
+artifactum-provider-opendal={path="../artifactum-provider-opendal"}
+artifactum-plugin-protocol={path="../artifactum-plugin-protocol"}
+opendal={version="0.58",default-features=false,features=["http-transport-reqwest","services-webhdfs"]}
+tokio.workspace=true
+[lints]
+workspace=true

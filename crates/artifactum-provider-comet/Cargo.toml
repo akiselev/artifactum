@@ -1,0 +1,24 @@
+[package]
+name = "artifactum-provider-comet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "artifactum_provider_comet"
+
+[[bin]]
+name = "artifactum-provider-comet"
+path = "src/main.rs"
+
+[dependencies]
+artifactum-core = { path = "../artifactum-core" }
+artifactum-provider-command = { path = "../artifactum-provider-command" }
+artifactum-plugin-protocol = { path = "../artifactum-plugin-protocol" }
+async-trait.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

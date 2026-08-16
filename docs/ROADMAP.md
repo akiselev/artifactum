@@ -1,101 +1,108 @@
-# Roadmap
+# Artifactum roadmap after 0.3
 
-## Before publishing 0.1
+Provider waves 1–3 and the acquisition/profile/lazy/concurrency/persistent-session/protocol/access refactors are implemented in this workspace. The next work should deepen correctness and artifact-graph functionality rather than immediately adding another long tail of storage plugins.
 
-- Run `cargo fmt`, `cargo check`, `cargo test` on Linux, macOS and Windows.
-- Add CI for MSRV 1.85 and stable.
-- Add integration tests that spawn provider binaries through the real protocol.
-- Decide the crates.io namespace/name availability and repository URL.
-- Add stale lock detection/recovery (current store lockfiles time out but do not reclaim dead owners).
-- Make whole-tree materialization atomic.
-- Define lockfile forward-compatibility rules and golden fixtures.
-- Harden Windows file URI/path handling.
-- Add provider conformance test helpers.
+## 0.3 hardening
 
-## Store
+- Compile/test on Linux, macOS, and Windows; generation environment lacked a Rust toolchain.
+- Add provider conformance testkit shared by every plugin.
+- Add integration fixtures for S3-compatible MinIO, OCI registry, Git LFS, WebDAV, and GitLab.
+- Add deterministic daemonkit lifecycle/fault tests with `daemonkit-testkit`.
+- Add process-crash resume journals so HTTP `.partial` data survives CLI/daemon restarts rather than only retrying ranges within one acquisition call.
+- Add per-origin concurrency/rate limiting in addition to global file `--jobs`.
+- Add timeout/retry policy objects to acquisition context.
+- Add atomic whole-tree materialization and reflink/clonefile support.
+- Add cache leases so in-flight blobs cannot race GC.
+- Add canonical lockfile serialization tests and migration tooling for v1 -> v2.
 
-- Reflink / clonefile materialization.
-- Read-only materialization option.
-- Leases for active acquisitions and materializations.
-- Recent-use retention policy in addition to pins.
-- Manifest GC.
-- CAS statistics and `artifactum cache du`.
-- Repair operation that reacquires corrupt/missing locked blobs.
-- Optional alternate hash algorithms while retaining SHA-256 as baseline interoperability identity.
+## Provider semantics to deepen
 
-## Acquisition
+- Hugging Face: evaluate provider-native Xet acquisition while retaining Artifactum CAS import.
+- GitHub/GitLab: richer release/package/file listing and version enumeration.
+- S3/GCS/Azure: version-listing APIs and exact backend-specific immutable identity tests.
+- DVC/W&B/MLflow/ClearML/Comet: resolve mutable aliases/stages to immutable upstream IDs before invoking bridge acquisition.
+- Kaggle: catalog search/inspect/version/file listing through official API semantics.
+- ModelScope: search/version listing and immutable revision normalization.
+- NGC: catalog APIs and signed-model verification metadata.
+- OSF/Dataverse: historical file/dataset version enumeration.
+- Scientific providers: DOI meta-provider that redirects to Zenodo/Figshare/Dataverse/etc.
 
-- Range/resume negotiation.
-- Parallel chunk acquisition.
-- Retry/backoff policy split between resolver and provider.
-- Bandwidth/concurrency limits.
-- Host progress events.
-- Cancellation.
-- Mirror ordering/fallback.
+## Plugin security/trust
 
-## Plugin host
+- Cache plugin descriptors so listing does not execute every discovered binary.
+- Trust database keyed by executable path + SHA-256.
+- `artifactum plugin trust/revoke/doctor`.
+- Environment allow-listing so each plugin receives only declared credentials/config.
+- Optional bubblewrap/sandbox execution on Linux.
+- Signed provider metadata/package verification where available.
+- Protocol cancellation and progress/rate-limit notifications.
 
-Before treating arbitrary shared `PATH` entries as a mature plugin ecosystem, add lazy activation / descriptor caching and an explicit trust policy so merely listing unrelated plugins does not require executing every matching binary. `ARTIFACTUM_PLUGIN_PATH` already provides a narrower discovery path for controlled environments.
+## Remote cache
 
-The protocol is session-shaped, but the current host intentionally launches a fresh process per call for implementation simplicity. Upgrade it to:
+Add Artifactum-to-Artifactum content mirroring independent of origin provider:
 
-- persistent provider processes;
-- monotonically increasing/multiplexed request IDs;
-- concurrent requests;
-- health checking and restart;
-- cancellation;
-- progress and rate-limit notifications;
-- provider-specific command forwarding;
-- protocol minor-version negotiation.
+```text
+locked SHA-256
+    -> local CAS
+    -> configured remote CAS
+    -> origin provider
+```
 
-## Providers
+Planned commands:
 
-Next implementation order:
+```text
+artifactum cache remote add
+artifactum cache push
+artifactum cache pull
+artifactum cache sync
+artifactum serve
+```
 
-1. OCI
-2. S3-compatible
-3. Git + Git LFS
-4. ModelScope
-5. Kaggle
-6. W&B Artifacts
-7. MLflow
-8. Zenodo
-9. Figshare
-10. GCS / Azure Blob
+A minimal read-only cache protocol can expose `HEAD/GET /blobs/sha256/<digest>` and manifest endpoints. Object-store-backed remote caches should use the same CAS namespace.
 
-## Hugging Face
+## Extractor/transform graph
 
-The initial provider uses Hub REST metadata and resolved HTTP file downloads. Evaluate `hf-hub` 1.x as the acquisition engine to gain provider-native Xet transfers and Hugging Face cache interop without moving CAS ownership out of Artifactum. One clean approach is to ask `hf-hub` to acquire into a provider-local/temp path and then copy/link into the host staging path returned by Artifactum.
-
-## Extractors and transforms
-
-Keep these separate from remote providers.
-
-Proposed package families:
+Introduce a separate plugin family rather than overloading providers:
 
 ```text
 artifactum-extractor-tar
 artifactum-extractor-zip
-artifactum-extractor-7z
 artifactum-extractor-zstd
-artifactum-transform-onnx
 artifactum-transform-gguf
+artifactum-transform-onnx
 ```
 
-A future artifact graph can express:
+Derived identity should hash:
 
 ```text
-remote provider resolution
-        ↓
-compressed source blob
-        ↓
-extractor
-        ↓
-file-tree artifact
-        ↓
-optional transform
-        ↓
-derived artifact
+input manifest digest
++ transform implementation identity/version
++ canonical parameters
 ```
 
-Derived artifacts should themselves land in the CAS with provenance linking them to source manifest(s), transform identity/version, and canonical transform parameters.
+This makes model conversion/sharding/quantization deterministic and cacheable.
+
+## Provenance/verifiers
+
+Add verifier plugins for trust rather than conflating upstream checksum and authorship:
+
+```text
+artifactum-verifier-sigstore
+artifactum-verifier-slsa
+artifactum-verifier-pgp
+```
+
+Artifactum's SHA-256 guarantees byte identity; provenance answers who produced/asserted those bytes and under what process.
+
+## Publishing
+
+Add the inverse of acquisition:
+
+```text
+artifactum publish ./tree oci:...
+artifactum publish ./tree s3:...
+artifactum publish ./tree hf:...
+artifactum publish ./tree github:...
+```
+
+Publishing should consume a stored manifest/CAS, not arbitrary provider-local paths, so the outbound artifact has known identity before upload.
