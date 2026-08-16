@@ -4,11 +4,12 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+
 [dependencies]
-artifactum-core = { path = "../artifactum-core" }
+artifactum-resolver = { path = "../artifactum-resolver" }
 reqwest.workspace = true
+serde.workspace = true
 serde_json.workspace = true
-url.workspace = true
-percent-encoding.workspace = true
+
 [lints]
 workspace = true

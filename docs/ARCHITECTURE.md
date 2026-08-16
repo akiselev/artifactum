@@ -1,232 +1,99 @@
-# Artifactum architecture
+# Architecture
 
-## Core invariants
+## Invariants
 
-1. The Artifactum host owns content identity. Providers never choose CAS paths.
-2. Resolution and acquisition are distinct. Mutable semantic names are resolved before bytes move.
-3. `ResolvedFile::source` is stable provider-owned reacquisition state, not a place for live credentials.
-4. Every acquired file is written to a host-created staging path and SHA-256 hashed by the host before CAS commit.
-5. Partial acquisition is valid state. A resolved artifact may have zero, some, or all blobs locally.
-6. A complete stored manifest exists only when every resolved file has a verified CAS blob.
-7. Provider profiles are part of acquisition identity and are preserved by lockfiles.
-8. Static providers and external provider processes expose the same `ArtifactProvider` abstraction.
-9. Provider process lifetime is an implementation concern below the resolver; daemonkit owns persistent CLI sessions.
-10. Provider capabilities are additive. Search/inspect/version/file listing may be unsupported independently.
+1. Content identity and provenance are separate.
+2. Providers never choose CAS identity.
+3. A mutable external reference is resolved before bytes move.
+4. An action is a canonical computation request; an attempt is one execution; a realization binds a successful action to artifact outputs.
+5. Cache hits are legal only for `pure` and `reproducible` actions.
+6. `volatile` actions always execute. `effect` actions always execute and produce immutable receipts when they have no declared data output.
+7. Scheduling/budget/task-name fields do not enter `ActionKey`.
+8. External source locks and derived action realizations are separate state planes.
+9. Every remote object is verified against its requested SHA-256 before becoming trusted local content.
+10. GC is reachability-based and must honor refs, active leases, recent realizations, source observations, checkpoints, attestations, and caller-supplied roots.
+11. Pipeline `foreach` is fine-grained: one item is one action identity.
+12. Executors operate on already-materialized sandboxes and do not own artifact identity.
 
-## Layers
-
-```text
-                 project/application
-                        │
-                        ▼
-                 ArtifactResolver
-                        │
-          ┌─────────────┴─────────────┐
-          │                           │
-   linked providers          daemon plugin providers
-                                  │
-                                  ▼
-                         daemonkit plugin host
-                                  │
-                         multiplexed sessions
-                                  │
-                                  ▼
-                        provider executables
-          └─────────────┬─────────────┘
-                        ▼
-                    Resolution
-                        │
-                        ▼
-                AcquisitionPlan
-                        │
-         ┌──────────────┼──────────────┐
-         ▼              ▼              ▼
-      host HTTP      LocalCopy    ProviderManaged
-                                      │
-                         OpenDAL / OCI / Git / vendor CLI
-         └──────────────┬──────────────┘
-                        ▼
-                 staging file
-                        │
-                  host SHA-256
-                        │
-                        ▼
-                       CAS
-                        │
-              ┌─────────┴─────────┐
-              ▼                   ▼
-          partial pin      complete manifest
-                                  │
-                                  ▼
-                            materialization
-```
-
-## Requirement, resolution, acquisition
-
-`ArtifactRequirement` is mutable project intent:
-
-```rust
-ArtifactRequirement {
-    reference,
-    revision,
-    selection,
-    metadata,
-}
-```
-
-`Resolution` is the provider's concrete interpretation:
-
-```rust
-Resolution {
-    provider,
-    canonical_ref,
-    revision,
-    files,
-    provider_state,
-    metadata,
-}
-```
-
-Each `ResolvedFile` contains an artifact-relative path, optional upstream size/digests/media type, and opaque reacquisition source state.
-
-The provider then produces an `AcquisitionPlan`:
-
-```rust
-pub enum AcquisitionPlan {
-    Http(HttpAcquisition),
-    LocalCopy { source: PathBuf },
-    ObjectStore(ObjectStoreAcquisition),
-    Git(GitAcquisition),
-    Oci(OciAcquisition),
-    ProviderManaged { state: serde_json::Value },
-}
-```
-
-The enum deliberately has more generic plan variants than the current host executes. HTTP and local copy are fully host-executed today. OpenDAL/OCI/Git providers currently use `ProviderManaged` where keeping service-specific dependencies inside independently installable provider crates is preferable to putting every backend into the main binary.
-
-## Provider profiles
-
-A project can define named provider instances:
-
-```toml
-[providers.lab]
-kind = "s3"
-endpoint = "https://minio.internal"
-bucket = "models"
-
-[artifacts.foo]
-source = "lab:path/to/foo.bin"
-```
-
-The resolver routes scheme `lab` to provider kind `s3`, rewrites the request for that provider, and injects `ProviderProfile { name: "lab", ... }` into resolve/acquire contexts. The resolved metadata records `artifactum_profile = "lab"`; `Artifacts.lock` preserves it.
-
-This lets multiple instances of the same provider coexist without separate binaries or Cargo features.
-
-## Lazy acquisition
-
-Resolution does not imply acquisition. `ResolvedArtifact` exposes:
-
-```rust
-ensure_file(path)
-ensure_matching(globs)
-ensure_all()
-```
-
-The resolver uses a bounded `buffer_unordered` scheduler. Each selected file is independently checked against the CAS, planned/acquired when missing, verified, and committed.
-
-A `PartialFetch` contains the resolution plus only the newly/known acquired `StoredFile`s. `finalize_cached()` checks every resolved file against the CAS; if all are present it writes the complete `StoredArtifact` manifest.
-
-## Lockfile merging
-
-The lockfile can retain file-level CAS identities across separate lazy fetches. Previous file digests are reusable only when all of these match:
-
-- provider name;
-- canonical reference;
-- resolved revision;
-- provider profile.
-
-This prevents a mutable tag/branch update from reusing stale file identities.
-
-`requirement_digest` separately detects drift in project intent for `--locked` operation.
-
-## CAS and partial GC roots
-
-Complete artifacts are pinned by stored-manifest digest. Partial artifacts are pinned by explicit blob digests:
-
-```json
-{
-  "name": "project:artifact",
-  "manifest": null,
-  "blobs": [
-    {"algorithm":"sha256","value":"..."}
-  ]
-}
-```
-
-GC traverses both forms. Once an artifact becomes complete, its pin can point to the manifest instead.
-
-## Persistent plugin process model
-
-Provider binaries still implement the ordinary Artifactum protocol and know nothing about daemonkit.
-
-The main CLI uses `artifactum-plugin-host`:
+## Planes
 
 ```text
-CLI invocation A ─┐
-CLI invocation B ─┼─ daemonkit authenticated stream ─> Artifactum host daemon
-CLI invocation C ─┘                                      │
-                                                         ├─ hf plugin session
-                                                         ├─ s3 plugin session
-                                                         └─ kaggle plugin session
+                   Artifactum.toml / Rust API
+                            |
+                         planner
+                            |
+                     ActionSpec DAG
+                            |
+               +------------+------------+
+               |                         |
+          source plane               engine plane
+ Requirement -> Resolution        action cache lookup
+       |                              |       |
+ AcquisitionPlan                 hit |       | execute
+       |                              |       v
+       +----------> Artifact <--------+   Executor
+                      |                    |
+                      |                Attempt
+                      |                    |
+                      +------------- Realization
+
+    durable CAS                         SQLite metadata
+ content + manifests       actions / attempts / realizations / refs-to-history
+         |                                  |
+         +----------------+-----------------+
+                          |
+                 provenance / remote
 ```
 
-The host uses daemonkit's embedded-service mode. daemonkit owns instance identity, startup serialization, authenticated local transport, generation changes, stale-state repair, shutdown, and process lifecycle. Artifactum owns only its host request framing and provider-session pool.
+## Crates
 
-Provider sessions support concurrent request IDs. A provider process crash/EOF/protocol failure evicts that session and causes one respawn/retry; provider-domain errors are returned unchanged.
+- `artifactum-core`: I/O-free stable identity/domain types.
+- `artifactum-store`: durable CAS, trees, collections, chunked blobs, refs, leases, GC, materialization.
+- `artifactum-metadata`: SQLite append/history plane.
+- `artifactum-resolver`: semantic provider routing and source acquisition.
+- `artifactum-transport-http`: resumable host-owned HTTP transfer.
+- `artifactum-action`: builders and structural action diffs.
+- `artifactum-executor`: execution backends.
+- `artifactum-engine`: action cache, sandbox, attempts, realizations, checkpoints, lineage.
+- `artifactum-pipeline`: project/lock format, DAG planner, maps, scheduler.
+- `artifactum-remote`: origin-independent CAS mirroring/server.
+- `artifactum-provenance`: in-toto/SLSA/verification/OCI.
+- `artifactum-plugin-protocol`: generic multiplexable framing.
+- `artifactum-plugin-host`: daemonkit-backed process/session owner.
+- `artifactum-provider-sdk`: provider-to-plugin adapter.
+- `artifactum-provider-*`: independently distributable provider implementations.
+- `artifactum-cli`: unified CLI.
 
-The daemon has a 30-minute idle timeout. Provider child processes use Tokio `kill_on_drop` so daemon teardown releases them.
+## Identity layers
 
-## Credentials and access
+`ContentId` is SHA-256 over exact stored bytes. For structured content those bytes are the canonical JSON representation.
 
-Credentials are runtime inputs. First-party semantic HTTP providers store only durable URLs/IDs in `ResolvedFile::source`; `prepare_acquisition` reconstructs headers from the active profile/environment.
+`ArtifactId` is SHA-256 over `ArtifactManifest`, which gives content semantic kind/media/schema/annotations without embedding source or producer provenance.
 
-Access failures can carry:
+`ActionKey` is SHA-256 over the computation identity projection:
 
-```rust
-AccessChallenge {
-    provider,
-    requirement: Authentication | LicenseAcceptance | TermsAcceptance |
-                 Membership | ManualApproval | ExternalTool,
-    message,
-    action_url,
-    tool,
-}
+```text
+format version
+command argv
+input artifact IDs
+code artifact IDs
+canonical parameters
+environment variables + immutable container reference
+output contracts
+network/sandbox policy
+platform constraint
 ```
 
-The plugin protocol transports this structured value rather than flattening it into a string.
+It deliberately excludes task name, executor selection, CPU/memory/GPU reservation, timeout/budget accounting, cache policy, timestamps, retry number, worker identity, and priority.
 
-## OpenDAL provider SDK
+## Source versus computation
 
-Storage plugins share `artifactum-provider-opendal`. A thin provider chooses:
+Source provenance is represented by `SourceObservation`. Action provenance is represented by `AttemptRecord` and `Realization`. This permits the same artifact to have many valid origins without changing its identity.
 
-- Artifactum name/schemes;
-- OpenDAL service scheme;
-- locator interpretation (`Path` or authority + path);
-- optional backend-default config;
-- whether explicit object versions should use OpenDAL version-aware stat/read.
+## Failure semantics
 
-Provider profile config is merged at runtime and `${ENV}` values are expanded only when constructing the backend. Direct authority-bearing references persist only non-secret authority identity required for locked reacquisition.
+Outputs are staged inside the attempt sandbox. They enter the CAS only after the executor returns success and every declared output exists. stdout/stderr and checkpoint outputs are preserved independently of successful realization, so debugging/recovery does not require pretending a failed attempt produced a valid result.
 
-## Provider vs transport vs extractor
+## Distributed execution
 
-Artifactum keeps these concepts separate:
-
-- **provider** — semantic identity, versions, catalog metadata;
-- **transport/acquisition plan** — how bytes move;
-- **store** — content identity and persistence;
-- **resolver** — orchestration;
-- **extractor** — future container interpretation (`tar`, `zip`, `zstd`);
-- **transform** — future reproducible derived artifacts (`GGUF`, ONNX optimization, sharding);
-- **verifier** — future provenance/signature policy.
-
-Provider waves 1–3 are implemented here. Extractor/transform/provenance graphs remain a later layer rather than being encoded as providers.
+The engine has one executor interface. Local/bubblewrap/container executors operate directly on the local sandbox. SSH and Kubernetes backends stage the sandbox to a remote execution root and copy successful state back. Slurm assumes a shared filesystem. Executable executor plugins form an ABI-free extension boundary.

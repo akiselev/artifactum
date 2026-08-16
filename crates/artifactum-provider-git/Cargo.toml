@@ -11,8 +11,8 @@ name = "artifactum-provider-git"
 path = "src/main.rs"
 [dependencies]
 artifactum-core = { path = "../artifactum-core" }
-artifactum-provider-command = { path = "../artifactum-provider-command" }
-artifactum-plugin-protocol = { path = "../artifactum-plugin-protocol" }
+artifactum-resolver = { path = "../artifactum-resolver" }
+artifactum-provider-sdk = { path = "../artifactum-provider-sdk" }
 async-trait.workspace = true
 directories.workspace = true
 hex.workspace = true

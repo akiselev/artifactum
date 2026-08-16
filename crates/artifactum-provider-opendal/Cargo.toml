@@ -1,16 +1,18 @@
 [package]
 name = "artifactum-provider-opendal"
-description = "OpenDAL provider SDK for Artifactum storage backends"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+
 [dependencies]
 artifactum-core = { path = "../artifactum-core" }
+artifactum-resolver = { path = "../artifactum-resolver" }
 async-trait.workspace = true
 futures-util.workspace = true
 opendal = { version = "0.58", default-features = false, features = ["http-transport-reqwest"] }
 serde_json.workspace = true
 tokio.workspace = true
+
 [lints]
 workspace = true

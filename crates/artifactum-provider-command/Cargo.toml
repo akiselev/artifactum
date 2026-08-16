@@ -7,9 +7,10 @@ license.workspace = true
 
 [dependencies]
 artifactum-core = { path = "../artifactum-core" }
+artifactum-resolver = { path = "../artifactum-resolver" }
+async-trait.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-tempfile.workspace = true
 
 [lints]
 workspace = true

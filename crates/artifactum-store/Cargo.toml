@@ -1,6 +1,5 @@
 [package]
 name = "artifactum-store"
-description = "Content-addressed artifact store for Artifactum"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +7,8 @@ license.workspace = true
 
 [dependencies]
 artifactum-core = { path = "../artifactum-core" }
+async-trait.workspace = true
+chrono.workspace = true
 directories.workspace = true
 hex.workspace = true
 serde.workspace = true
@@ -18,8 +19,8 @@ tokio.workspace = true
 uuid.workspace = true
 walkdir.workspace = true
 
-[dev-dependencies]
-tempfile.workspace = true
-
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

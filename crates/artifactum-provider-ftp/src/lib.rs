@@ -1,3 +1,2 @@
-//! Artifactum ftp provider backed by OpenDAL.
-use artifactum_provider_opendal::{LocatorMode,OpenDalProvider};
-#[must_use] pub fn provider()->OpenDalProvider{OpenDalProvider::new("ftp",&["ftp","ftps"],"ftp",LocatorMode::Path)}
+use artifactum_provider_command::CommandProvider;
+#[must_use] pub fn provider()->CommandProvider{CommandProvider::new("ftp",&["ftp","ftps"],"rclone",&["cat","{profile_remote}:{locator}"])}

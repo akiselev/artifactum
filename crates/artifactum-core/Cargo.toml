@@ -1,16 +1,16 @@
 [package]
 name = "artifactum-core"
-description = "Stable domain model and provider API for Artifactum"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-async-trait.workspace = true
-globset.workspace = true
+chrono.workspace = true
+hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 

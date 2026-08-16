@@ -1,20 +1,18 @@
 [package]
-name="artifactum-provider-azure"
-description="azure provider for Artifactum via OpenDAL"
-version.workspace=true
-edition.workspace=true
-rust-version.workspace=true
-license.workspace=true
+name = "artifactum-provider-azure"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 [lib]
-name="artifactum_provider_azure"
+name = "artifactum_provider_azure"
 [[bin]]
-name="artifactum-provider-azure"
-path="src/main.rs"
+name = "artifactum-provider-azure"
+path = "src/main.rs"
 [dependencies]
-anyhow.workspace=true
-artifactum-provider-opendal={path="../artifactum-provider-opendal"}
-artifactum-plugin-protocol={path="../artifactum-plugin-protocol"}
-opendal={version="0.58",default-features=false,features=["http-transport-reqwest","services-azblob"]}
-tokio.workspace=true
+artifactum-provider-opendal = { path = "../artifactum-provider-opendal" }
+artifactum-provider-sdk = { path = "../artifactum-provider-sdk" }
+opendal = { version = "0.58", default-features = false, features = ["http-transport-reqwest","services-azblob"] }
+tokio.workspace = true
 [lints]
-workspace=true
+workspace = true

@@ -1,3 +1,2 @@
-use artifactum_provider_dvc::provider;
 #[tokio::main]
-async fn main()->Result<(),Box<dyn std::error::Error>>{artifactum_plugin_protocol::serve(provider()).await?;Ok(())}
+async fn main(){if let Err(e)=artifactum_provider_sdk::serve_provider(artifactum_provider_dvc::provider()).await{eprintln!("{e}");std::process::exit(1);}}

@@ -1,20 +1,14 @@
 [package]
-name="artifactum-provider-ipfs"
-description="ipfs provider for Artifactum via OpenDAL"
-version.workspace=true
-edition.workspace=true
-rust-version.workspace=true
-license.workspace=true
-[lib]
-name="artifactum_provider_ipfs"
-[[bin]]
-name="artifactum-provider-ipfs"
-path="src/main.rs"
+name = "artifactum-provider-ipfs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
 [dependencies]
-anyhow.workspace=true
-artifactum-provider-opendal={path="../artifactum-provider-opendal"}
-artifactum-plugin-protocol={path="../artifactum-plugin-protocol"}
-opendal={version="0.58",default-features=false,features=["http-transport-reqwest","services-ipfs"]}
-tokio.workspace=true
+artifactum-provider-command = { path = "../artifactum-provider-command" }
+artifactum-provider-sdk = { path = "../artifactum-provider-sdk" }
+tokio.workspace = true
+
 [lints]
-workspace=true
+workspace = true

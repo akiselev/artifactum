@@ -1,13 +1,2 @@
-use std::path::Path;
-use artifactum_core::{provider_error,AcquireContext,Acquisition,AcquisitionPlan,ArtifactProvider,ArtifactRequirement,ProviderCapabilities,ProviderDescriptor,ResolveContext,Resolution,ResolvedFile};
-use artifactum_provider_command::{find_and_copy,required_fragment,run_checked,single_file_resolution,source_with,string_field,tempdir};
-use async_trait::async_trait;
-#[derive(Clone,Debug,Default)]pub struct ModelScopeProvider;
-fn parse(locator:&str)->artifactum_core::Result<(&str,&str,&str)>{let(kind,rest)=locator.split_once(':').ok_or_else(||provider_error("modelscope","expected modelscope:model:<repo>#<path> or modelscope:dataset:<repo>#<path>"))?;if !matches!(kind,"model"|"dataset"){return Err(provider_error("modelscope","resource kind must be model or dataset"));}let(repo,path)=required_fragment("modelscope",rest,"path")?;Ok((kind,repo,path))}
-#[async_trait]impl ArtifactProvider for ModelScopeProvider{
- fn descriptor(&self)->ProviderDescriptor{ProviderDescriptor{name:"modelscope".into(),version:env!("CARGO_PKG_VERSION").into(),schemes:vec!["modelscope".into()],capabilities:ProviderCapabilities{resolve:true,acquire:true,list:true,auth:true,..Default::default()},metadata:Default::default()}}
- async fn resolve(&self,r:&ArtifactRequirement,_:&ResolveContext)->artifactum_core::Result<Resolution>{let(kind,repo,path)=parse(r.reference.locator())?;single_file_resolution("modelscope",format!("modelscope:{kind}:{repo}#{path}"),r,path,source_with([("kind",kind.into()),("repo",repo.into()),("path",path.into()),("revision",r.revision.clone().unwrap_or_default())]))}
- async fn prepare_acquisition(&self,f:&ResolvedFile,_:&AcquireContext)->artifactum_core::Result<AcquisitionPlan>{Ok(AcquisitionPlan::ProviderManaged{state:f.source.clone()})}
- async fn acquire_managed(&self,f:&ResolvedFile,_:&AcquisitionPlan,d:&Path,_:&AcquireContext)->artifactum_core::Result<Acquisition>{let kind=string_field(&f.source,"kind","modelscope")?;let repo=string_field(&f.source,"repo","modelscope")?;let path=string_field(&f.source,"path","modelscope")?;let rev=f.source.get("revision").and_then(|v|v.as_str()).filter(|v|!v.is_empty());let tmp=tempdir("modelscope")?;let mut args=vec!["download".into(),format!("--{kind}"),repo.into(),path.into(),"--local_dir".into(),tmp.path().display().to_string()];if let Some(rev)=rev{args.extend(["--revision".into(),rev.into()]);}run_checked("modelscope","modelscope",args).await?;let n=find_and_copy(tmp.path(),path,d,"modelscope").await?;Ok(Acquisition{bytes_written:Some(n),metadata:Default::default()})}
-}
-pub fn provider()->ModelScopeProvider{ModelScopeProvider}
+use artifactum_provider_command::CommandProvider;
+#[must_use] pub fn provider()->CommandProvider{CommandProvider::new("modelscope",&["modelscope"],"modelscope",&["download","--model","{locator}","--local_dir","{destination}"])}

@@ -1,22 +1,15 @@
-# Agent guide
+# Agent instructions
 
-Artifactum is a Rust workspace implementing a provider-extensible artifact manager.
+Artifactum is identity-sensitive infrastructure. Do not make a change that appears to work by bypassing the CAS, source lock, action-key, or provenance invariants.
 
-Start with:
+Before changing code:
 
-1. `README.md`
-2. `docs/ARCHITECTURE.md`
-3. `crates/artifactum-core/src/lib.rs`
-4. `crates/artifactum-resolver/src/lib.rs`
-5. `crates/artifactum-plugin-protocol/src/lib.rs`
-6. one provider crate
+1. Read `README.md` and `docs/ARCHITECTURE.md`.
+2. Identify which plane owns the behavior: source/resolver, CAS, metadata, engine, executor, remote, or provenance.
+3. Preserve the `ContentId` / `ArtifactId` / `ActionKey` distinction.
+4. Never put credentials or mutable signed URLs into semantic artifact identity.
+5. Never turn a failed attempt into a successful realization.
+6. Never use cache hits for `volatile` or `effect` actions.
+7. If adding a scheduling-only field, keep it out of `ActionKey` unless it actually changes the computation's observable semantics.
 
-Architectural constraints:
-
-- Do not let providers write directly into the CAS.
-- Do not add provider-specific fields to `ArtifactRef`; locator syntax belongs to the provider.
-- Do not add a Cargo feature to the main CLI for every new provider.
-- Every provider should be usable as a library and, where applicable, an `artifactum-provider-*` executable.
-- Never persist secrets or expiring signed URLs as artifact identity.
-- Preserve lockfile reproducibility: mutable references resolve before acquisition, and locked fetches skip semantic resolution.
-- Keep extraction/transformation separate from provider acquisition.
+Before submitting changes run `./scripts/validate.sh`, then the relevant focused tests, then `ARTIFACTUM_E2E_KEEP=1 ./scripts/e2e_observe.sh`. Read `AGENT_TESTING.md`: an agent must inspect the produced evidence, not merely report that commands exited zero.

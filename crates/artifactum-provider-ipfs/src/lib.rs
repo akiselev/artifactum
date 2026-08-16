@@ -1,3 +1,2 @@
-//! Artifactum ipfs provider backed by OpenDAL.
-use artifactum_provider_opendal::{LocatorMode,OpenDalProvider};
-#[must_use] pub fn provider()->OpenDalProvider{OpenDalProvider::new("ipfs",&["ipfs"],"ipfs",LocatorMode::Path)}
+use artifactum_provider_command::CommandProvider;
+#[must_use] pub fn provider()->CommandProvider{CommandProvider::new("ipfs",&["ipfs"],"rclone",&["cat","{profile_remote}:{locator}"])}

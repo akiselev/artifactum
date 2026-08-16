@@ -1,0 +1,23 @@
+[package]
+name = "artifactum-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+artifactum-action = { path = "../artifactum-action" }
+artifactum-core = { path = "../artifactum-core" }
+artifactum-executor = { path = "../artifactum-executor" }
+artifactum-metadata = { path = "../artifactum-metadata" }
+artifactum-store = { path = "../artifactum-store" }
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

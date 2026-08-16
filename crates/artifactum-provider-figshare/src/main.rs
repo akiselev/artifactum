@@ -1,1 +1,1 @@
-use artifactum_provider_figshare::provider;#[tokio::main]async fn main()->Result<(),Box<dyn std::error::Error>>{artifactum_plugin_protocol::serve(provider()).await?;Ok(())}
+#[tokio::main]async fn main(){if let Err(e)=artifactum_provider_sdk::serve_provider(artifactum_provider_figshare::FigshareProvider::default()).await{eprintln!("{e}");std::process::exit(1)}}

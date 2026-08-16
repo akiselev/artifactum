@@ -1,2 +1,2 @@
 #[tokio::main]
-async fn main()->anyhow::Result<()>{artifactum_plugin_protocol::serve(artifactum_provider_onedrive::provider()).await?;Ok(())}
+async fn main(){if let Err(e)=artifactum_provider_sdk::serve_provider(artifactum_provider_onedrive::provider()).await{eprintln!("{e}");std::process::exit(1);}}

@@ -1,3 +1,2 @@
-//! Artifactum cos provider backed by OpenDAL.
-use artifactum_provider_opendal::{LocatorMode,OpenDalProvider};
-#[must_use] pub fn provider()->OpenDalProvider{OpenDalProvider::new("cos",&["cos"],"cos",LocatorMode::Authority{config_key:"bucket",revision_key:None})}
+use artifactum_provider_command::CommandProvider;
+#[must_use] pub fn provider()->CommandProvider{CommandProvider::new("cos",&["cos"],"rclone",&["cat","{profile_remote}:{locator}"])}

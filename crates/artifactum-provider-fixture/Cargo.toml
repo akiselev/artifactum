@@ -1,0 +1,22 @@
+[package]
+name = "artifactum-provider-fixture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+artifactum-core = { path = "../artifactum-core" }
+artifactum-provider-sdk = { path = "../artifactum-provider-sdk" }
+artifactum-resolver = { path = "../artifactum-resolver" }
+async-trait.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+artifactum-provider-testkit = { path = "../artifactum-provider-testkit" }
+tempfile.workspace = true

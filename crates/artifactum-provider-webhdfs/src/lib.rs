@@ -1,3 +1,2 @@
-//! Artifactum webhdfs provider backed by OpenDAL.
-use artifactum_provider_opendal::{LocatorMode,OpenDalProvider};
-#[must_use] pub fn provider()->OpenDalProvider{OpenDalProvider::new("webhdfs",&["webhdfs"],"webhdfs",LocatorMode::Path)}
+use artifactum_provider_command::CommandProvider;
+#[must_use] pub fn provider()->CommandProvider{CommandProvider::new("webhdfs",&["webhdfs"],"rclone",&["cat","{profile_remote}:{locator}"])}

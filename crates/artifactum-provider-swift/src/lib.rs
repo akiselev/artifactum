@@ -1,3 +1,2 @@
-//! Artifactum swift provider backed by OpenDAL.
-use artifactum_provider_opendal::{LocatorMode,OpenDalProvider};
-#[must_use] pub fn provider()->OpenDalProvider{OpenDalProvider::new("swift",&["swift"],"swift",LocatorMode::Authority{config_key:"container",revision_key:None})}
+use artifactum_provider_command::CommandProvider;
+#[must_use] pub fn provider()->CommandProvider{CommandProvider::new("swift",&["swift"],"rclone",&["cat","{profile_remote}:{locator}"])}

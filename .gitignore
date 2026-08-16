@@ -1,4 +1,4 @@
 /target
 /.artifactum
-Artifacts.lock
-*.partial
+Artifactum.lock
+*.tar.gz

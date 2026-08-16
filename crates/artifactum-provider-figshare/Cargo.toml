@@ -1,23 +1,16 @@
 [package]
-name = "artifactum-provider-figshare"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-[lib]
-name = "artifactum_provider_figshare"
-[[bin]]
-name = "artifactum-provider-figshare"
-path = "src/main.rs"
+name="artifactum-provider-figshare"
+version.workspace=true
+edition.workspace=true
+rust-version.workspace=true
+license.workspace=true
 [dependencies]
-artifactum-core = { path = "../artifactum-core" }
-artifactum-provider-api = { path = "../artifactum-provider-api" }
-artifactum-plugin-protocol = { path = "../artifactum-plugin-protocol" }
-async-trait.workspace = true
-reqwest.workspace = true
-serde_json.workspace = true
-tokio.workspace = true
-url.workspace = true
-
+artifactum-core={path="../artifactum-core"}
+artifactum-provider-api={path="../artifactum-provider-api"}
+artifactum-provider-sdk={path="../artifactum-provider-sdk"}
+artifactum-resolver={path="../artifactum-resolver"}
+async-trait.workspace=true
+serde_json.workspace=true
+tokio.workspace=true
 [lints]
-workspace = true
+workspace=true

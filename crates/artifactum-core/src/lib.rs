@@ -1,116 +1,86 @@
-//! Stable domain types and provider API for Artifactum.
-//!
-//! Providers resolve semantic references into immutable-ish manifests and
-//! prepare acquisition plans. The host owns generic transfers and CAS identity;
-//! providers only perform byte transfer when a service requires a native or
-//! proprietary transport.
+//! Stable, I/O-free domain model for Artifactum.
 
-use std::{
-    collections::BTreeMap,
-    fmt,
-    path::{Component, Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
-};
-
-use async_trait::async_trait;
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use std::{collections::BTreeMap, fmt, path::{Component, Path, PathBuf}, str::FromStr};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub type Metadata = BTreeMap<String, Value>;
-pub type ConfigMap = BTreeMap<String, String>;
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AccessRequirement {
-    Authentication,
-    LicenseAcceptance,
-    TermsAcceptance,
-    Membership,
-    ManualApproval,
-    ExternalTool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AccessChallenge {
-    pub provider: String,
-    pub requirement: AccessRequirement,
-    pub message: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub action_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool: Option<String>,
-}
+pub type Metadata = BTreeMap<String, serde_json::Value>;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("invalid artifact reference `{0}`; expected <scheme>:<locator>")]
-    InvalidReference(String),
-    #[error("invalid artifact path `{0}`")]
-    InvalidArtifactPath(String),
     #[error("invalid digest `{0}`")]
     InvalidDigest(String),
-    #[error("invalid selection glob `{pattern}`: {message}")]
-    InvalidGlob { pattern: String, message: String },
-    #[error("provider `{provider}` does not support operation `{operation}`")]
-    Unsupported { provider: String, operation: &'static str },
-    #[error("provider `{provider}`: {message}")]
-    Provider { provider: String, message: String },
-    #[error("access required by provider `{}`: {}", .0.provider, .0.message)]
-    AccessRequired(AccessChallenge),
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
+    #[error("invalid artifact path `{0}`")]
+    InvalidArtifactPath(String),
+    #[error("invalid reference `{0}`; expected <scheme>:<locator>")]
+    InvalidReference(String),
+    #[error("canonical serialization failed: {0}")]
+    Canonical(#[from] serde_json::Error),
 }
-
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Public Artifactum content identity. SHA-256 remains the interoperable default.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct ArtifactRef {
-    scheme: String,
-    locator: String,
+pub struct Digest {
+    pub algorithm: String,
+    pub value: String,
 }
-
-impl ArtifactRef {
-    pub fn new(scheme: impl Into<String>, locator: impl Into<String>) -> Result<Self> {
-        let scheme = scheme.into();
-        let locator = locator.into();
-        if scheme.is_empty() || locator.is_empty() || !scheme.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.' | b'_')) {
-            return Err(Error::InvalidReference(format!("{scheme}:{locator}")));
+impl Digest {
+    pub fn sha256(value: impl Into<String>) -> Result<Self> {
+        let value = value.into().to_ascii_lowercase();
+        if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(Error::InvalidDigest(format!("sha256:{value}")));
         }
-        Ok(Self { scheme, locator })
+        Ok(Self { algorithm: "sha256".into(), value })
     }
-    #[must_use] pub fn scheme(&self) -> &str { &self.scheme }
-    #[must_use] pub fn locator(&self) -> &str { &self.locator }
-    #[must_use] pub fn with_scheme(&self, scheme: impl Into<String>) -> Result<Self> { Self::new(scheme, self.locator.clone()) }
+    #[must_use]
+    pub fn as_qualified(&self) -> String { format!("{}:{}", self.algorithm, self.value) }
 }
-impl FromStr for ArtifactRef {
+impl fmt::Display for Digest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}:{}", self.algorithm, self.value) }
+}
+impl FromStr for Digest {
     type Err = Error;
     fn from_str(value: &str) -> Result<Self> {
-        let (scheme, locator) = value.split_once(':').ok_or_else(|| Error::InvalidReference(value.to_owned()))?;
-        Self::new(scheme.to_ascii_lowercase(), locator)
+        let (algorithm, digest) = value.split_once(':').ok_or_else(|| Error::InvalidDigest(value.into()))?;
+        match algorithm { "sha256" => Self::sha256(digest), _ => Err(Error::InvalidDigest(value.into())) }
     }
 }
-impl fmt::Display for ArtifactRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}:{}", self.scheme, self.locator) }
-}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ContentId(pub Digest);
+impl fmt::Display for ContentId { fn fmt(&self, f:&mut fmt::Formatter<'_>)->fmt::Result{ self.0.fmt(f) } }
+impl FromStr for ContentId { type Err=Error; fn from_str(v:&str)->Result<Self>{ Ok(Self(v.parse()?)) } }
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ArtifactId(pub Digest);
+impl fmt::Display for ArtifactId { fn fmt(&self, f:&mut fmt::Formatter<'_>)->fmt::Result{ self.0.fmt(f) } }
+impl FromStr for ArtifactId { type Err=Error; fn from_str(v:&str)->Result<Self>{ Ok(Self(v.parse()?)) } }
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ActionKey(pub Digest);
+impl fmt::Display for ActionKey { fn fmt(&self, f:&mut fmt::Formatter<'_>)->fmt::Result{ self.0.fmt(f) } }
+impl FromStr for ActionKey { type Err=Error; fn from_str(v:&str)->Result<Self>{ Ok(Self(v.parse()?)) } }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ArtifactPath(String);
 impl ArtifactPath {
-    pub fn new(path: impl AsRef<str>) -> Result<Self> {
-        let raw = path.as_ref().replace('\\', "/");
+    pub fn new(raw: impl AsRef<str>) -> Result<Self> {
+        let raw = raw.as_ref().replace('\\', "/");
         let path = Path::new(&raw);
-        if raw.is_empty() || path.is_absolute() || path.components().any(|part| matches!(part, Component::ParentDir | Component::RootDir | Component::Prefix(_))) {
+        let windows_drive_prefix = raw.as_bytes().get(1) == Some(&b':') && raw.as_bytes().first().is_some_and(u8::is_ascii_alphabetic);
+        if raw.is_empty() || windows_drive_prefix || path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_))) {
             return Err(Error::InvalidArtifactPath(raw));
         }
-        let normalized = path.components().filter_map(|component| match component {
-            Component::Normal(value) => Some(value.to_string_lossy().into_owned()),
+        let normalized = path.components().filter_map(|c| match c {
+            Component::Normal(v) => Some(v.to_string_lossy().into_owned()),
             Component::CurDir => None,
             _ => None,
         }).collect::<Vec<_>>().join("/");
@@ -120,148 +90,317 @@ impl ArtifactPath {
     #[must_use] pub fn as_str(&self) -> &str { &self.0 }
     #[must_use] pub fn to_path_buf(&self) -> PathBuf { self.0.split('/').collect() }
 }
-impl fmt::Display for ArtifactPath { fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(&self.0) } }
-impl FromStr for ArtifactPath { type Err = Error; fn from_str(value: &str) -> Result<Self> { Self::new(value) } }
+impl fmt::Display for ArtifactPath { fn fmt(&self,f:&mut fmt::Formatter<'_>)->fmt::Result{f.write_str(&self.0)} }
+impl FromStr for ArtifactPath { type Err=Error; fn from_str(v:&str)->Result<Self>{Self::new(v)} }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct Digest { pub algorithm: String, pub value: String }
-impl Digest {
-    pub fn sha256(hex: impl Into<String>) -> Result<Self> {
-        let value = hex.into().to_ascii_lowercase();
-        if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) { return Err(Error::InvalidDigest(format!("sha256:{value}"))); }
-        Ok(Self { algorithm: "sha256".into(), value })
+pub struct ArtifactRef { scheme:String, locator:String }
+impl ArtifactRef {
+    pub fn new(scheme: impl Into<String>, locator: impl Into<String>) -> Result<Self> {
+        let scheme=scheme.into(); let locator=locator.into();
+        if scheme.is_empty() || locator.is_empty() || !scheme.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b,b'+'|b'-'|b'.'|b'_')) {
+            return Err(Error::InvalidReference(format!("{scheme}:{locator}")));
+        }
+        Ok(Self{scheme:scheme.to_ascii_lowercase(),locator})
     }
-    #[must_use] pub fn as_qualified(&self) -> String { format!("{}:{}", self.algorithm, self.value) }
+    #[must_use] pub fn scheme(&self)->&str{&self.scheme}
+    #[must_use] pub fn locator(&self)->&str{&self.locator}
+    pub fn with_scheme(&self, scheme: impl Into<String>)->Result<Self>{Self::new(scheme,self.locator.clone())}
 }
-impl fmt::Display for Digest { fn fmt(&self, f:&mut fmt::Formatter<'_>)->fmt::Result { write!(f,"{}:{}",self.algorithm,self.value) } }
-impl FromStr for Digest { type Err=Error; fn from_str(value:&str)->Result<Self>{ let (algorithm,digest)=value.split_once(':').ok_or_else(||Error::InvalidDigest(value.into()))?; match algorithm {"sha256"=>Self::sha256(digest), _=>Err(Error::InvalidDigest(value.into()))}}}
+impl fmt::Display for ArtifactRef { fn fmt(&self,f:&mut fmt::Formatter<'_>)->fmt::Result{write!(f,"{}:{}",self.scheme,self.locator)} }
+impl FromStr for ArtifactRef { type Err=Error; fn from_str(v:&str)->Result<Self>{let(s,l)=v.split_once(':').ok_or_else(||Error::InvalidReference(v.into()))?;Self::new(s,l)} }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DigestSet(pub BTreeMap<String,String>);
-impl DigestSet { #[must_use] pub fn sha256(&self)->Option<&str>{self.0.get("sha256").map(String::as_str)} pub fn insert(&mut self,digest:Digest){self.0.insert(digest.algorithm,digest.value);} }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all="snake_case")]
+pub enum ContentKind { Blob, Tree, Collection }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Selection { #[serde(default, skip_serializing_if="Vec::is_empty")] pub include:Vec<String>, #[serde(default, skip_serializing_if="Vec::is_empty")] pub exclude:Vec<String> }
-impl Selection {
-    #[must_use] pub fn all()->Self{Self::default()}
-    pub fn compile(&self)->Result<CompiledSelection>{
-        fn build(patterns:&[String])->Result<GlobSet>{ let mut builder=GlobSetBuilder::new(); for pattern in patterns { builder.add(Glob::new(pattern).map_err(|e|Error::InvalidGlob{pattern:pattern.clone(),message:e.to_string()})?); } builder.build().map_err(|e|Error::InvalidGlob{pattern:"<set>".into(),message:e.to_string()}) }
-        Ok(CompiledSelection{include_all:self.include.is_empty(),include:build(&self.include)?,exclude:build(&self.exclude)?})
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all="snake_case")]
+pub enum TreeEntryKind { Blob, Tree }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TreeEntry {
+    pub path: ArtifactPath,
+    pub kind: TreeEntryKind,
+    pub content: ContentId,
+    pub size: u64,
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub executable: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TreeManifest {
+    pub version: u32,
+    pub entries: Vec<TreeEntry>,
+}
+impl TreeManifest {
+    #[must_use] pub fn new(mut entries: Vec<TreeEntry>) -> Self {
+        entries.sort_by(|a,b| a.path.as_str().cmp(b.path.as_str()));
+        Self { version: 1, entries }
     }
 }
-pub struct CompiledSelection { include_all:bool, include:GlobSet, exclude:GlobSet }
-impl CompiledSelection { #[must_use] pub fn matches(&self,path:&str)->bool{(self.include_all||self.include.is_match(path))&&!self.exclude.is_match(path)} }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChunkRef {
+    pub content: ContentId,
+    pub size: u64,
+}
+
+/// Content-defined chunk manifest for very large blobs. `logical_sha256` is the
+/// digest of the reassembled byte stream; `ContentId` identifies this canonical
+/// manifest, so chunk boundaries and ordering are themselves integrity checked.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChunkManifest {
+    pub version: u32,
+    pub logical_size: u64,
+    pub logical_sha256: Digest,
+    pub min_chunk: u64,
+    pub avg_chunk: u64,
+    pub max_chunk: u64,
+    pub chunks: Vec<ChunkRef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionEntry {
+    pub key: String,
+    pub artifact: ArtifactId,
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub label: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionManifest {
+    pub version: u32,
+    pub entries: Vec<CollectionEntry>,
+}
+impl CollectionManifest {
+    #[must_use] pub fn new(mut entries: Vec<CollectionEntry>) -> Self {
+        entries.sort_by(|a,b| a.key.cmp(&b.key));
+        Self { version: 1, entries }
+    }
+}
+
+/// Semantic interpretation of immutable content. Provenance is intentionally external.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactManifest {
+    pub version: u32,
+    pub content: ContentId,
+    pub kind: ContentKind,
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub media_type: Option<String>,
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub schema: Option<ArtifactId>,
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub format_version: Option<String>,
+    #[serde(default, skip_serializing_if="BTreeMap::is_empty")]
+    pub annotations: BTreeMap<String,String>,
+}
+impl ArtifactManifest {
+    #[must_use]
+    pub fn new(content: ContentId, kind: ContentKind) -> Self {
+        Self { version:1, content, kind, media_type:None, schema:None, format_version:None, annotations:BTreeMap::new() }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ArtifactRequirement { pub reference:ArtifactRef, #[serde(default,skip_serializing_if="Option::is_none")] pub revision:Option<String>, #[serde(default)] pub selection:Selection, #[serde(default)] pub metadata:Metadata }
-impl ArtifactRequirement { #[must_use] pub fn new(reference:ArtifactRef)->Self{Self{reference,revision:None,selection:Selection::default(),metadata:Metadata::default()}} }
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ProviderProfile {
-    pub name: String,
+pub struct SourceObservation {
+    pub id: Uuid,
+    pub artifact: ArtifactId,
     pub provider: String,
-    #[serde(default)] pub config: ConfigMap,
+    pub canonical_ref: String,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub revision: Option<String>,
+    pub observed_at: DateTime<Utc>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub etag: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub last_modified: Option<String>,
+    #[serde(default)]
+    pub provider_state: serde_json::Value,
+    #[serde(default)]
+    pub metadata: Metadata,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProviderCapabilities {
-    pub resolve:bool, pub acquire:bool, pub search:bool, pub inspect:bool, pub list:bool, pub versions:bool, pub push:bool, pub auth:bool, pub range:bool,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ProviderDescriptor { pub name:String, pub version:String, pub schemes:Vec<String>, pub capabilities:ProviderCapabilities, #[serde(default)] pub metadata:Metadata }
+#[serde(rename_all="snake_case")]
+pub enum CachePolicy { Pure, #[default] Reproducible, Volatile, Effect }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ResolvedRevision { pub id:String, #[serde(default,skip_serializing_if="Option::is_none")] pub requested:Option<String> }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ResolvedFile {
-    pub path:ArtifactPath,
-    #[serde(default,skip_serializing_if="Option::is_none")] pub size:Option<u64>,
-    #[serde(default)] pub digests:DigestSet,
-    #[serde(default,skip_serializing_if="Option::is_none")] pub media_type:Option<String>,
-    #[serde(default)] pub source:Value,
+pub struct OutputSpec {
+    pub kind: ContentKind,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub media_type: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub schema: Option<ArtifactId>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Resolution { pub provider:String, pub canonical_ref:String, #[serde(default,skip_serializing_if="Option::is_none")] pub revision:Option<ResolvedRevision>, pub files:Vec<ResolvedFile>, #[serde(default)] pub provider_state:Value, #[serde(default)] pub metadata:Metadata }
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct HttpAcquisition {
-    pub url:String,
-    #[serde(default)] pub headers:BTreeMap<String,String>,
-    #[serde(default)] pub resume:bool,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ObjectStoreAcquisition { pub scheme:String, pub path:String, #[serde(default,skip_serializing_if="Option::is_none")] pub version:Option<String>, #[serde(default)] pub config:ConfigMap }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GitAcquisition { pub repository:String, pub revision:String, pub path:String, #[serde(default)] pub lfs:bool }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct OciAcquisition { pub reference:String, pub digest:String, #[serde(default,skip_serializing_if="Option::is_none")] pub media_type:Option<String> }
-
-/// A provider's proposed way to obtain a resolved file. Generic variants are
-/// executed by the host; `ProviderManaged` invokes the provider's native path.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag="kind", rename_all="snake_case")]
-pub enum AcquisitionPlan {
-    Http(HttpAcquisition),
-    LocalCopy { path:PathBuf },
-    ObjectStore(ObjectStoreAcquisition),
-    Git(GitAcquisition),
-    Oci(OciAcquisition),
-    ProviderManaged { #[serde(default)] state:Value },
+impl OutputSpec {
+    #[must_use] pub fn blob()->Self{Self{kind:ContentKind::Blob,media_type:None,schema:None}}
+    #[must_use] pub fn tree()->Self{Self{kind:ContentKind::Tree,media_type:None,schema:None}}
+    #[must_use] pub fn collection()->Self{Self{kind:ContentKind::Collection,media_type:None,schema:None}}
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Acquisition { #[serde(default,skip_serializing_if="Option::is_none")] pub bytes_written:Option<u64>, #[serde(default)] pub metadata:Metadata }
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ResourceSpec {
+    #[serde(default,skip_serializing_if="Option::is_none")] pub cpus: Option<f64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub memory_bytes: Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub gpus: Option<u32>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub timeout_seconds: Option<u64>,
+    /// Optional executor cost rate used for deterministic run accounting.
+    #[serde(default,skip_serializing_if="Option::is_none")] pub cost_usd_micros_per_hour: Option<u64>,
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ResolveContext { pub offline:bool, #[serde(default)] pub environment:BTreeMap<String,String>, #[serde(default,skip_serializing_if="Option::is_none")] pub profile:Option<ProviderProfile> }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AcquireContext { pub offline:bool, pub request_id:Uuid, #[serde(default)] pub environment:BTreeMap<String,String>, #[serde(default,skip_serializing_if="Option::is_none")] pub profile:Option<ProviderProfile> }
-impl Default for AcquireContext { fn default()->Self{Self{offline:false,request_id:Uuid::new_v4(),environment:BTreeMap::new(),profile:None}} }
+pub struct BudgetSpec {
+    #[serde(default,skip_serializing_if="Option::is_none")] pub max_usd_micros: Option<u64>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub max_wall_seconds: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all="snake_case")]
+pub enum NetworkPolicy { Deny, Allow, SourceOnly }
+impl Default for NetworkPolicy { fn default()->Self{Self::Deny} }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all="snake_case")]
+pub enum SandboxPolicy { None, ReadOnlyInputs, Bubblewrap, Container }
+impl Default for SandboxPolicy { fn default()->Self{Self::ReadOnlyInputs} }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SearchRequest { pub query:String, #[serde(default,skip_serializing_if="Option::is_none")] pub limit:Option<usize>, #[serde(default,skip_serializing_if="Option::is_none")] pub cursor:Option<String>, #[serde(default)] pub metadata:Metadata }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SearchResult { pub reference:ArtifactRef, pub name:String, #[serde(default,skip_serializing_if="Option::is_none")] pub description:Option<String>, #[serde(default)] pub metadata:Metadata }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct SearchPage { #[serde(default)] pub items:Vec<SearchResult>, #[serde(default,skip_serializing_if="Option::is_none")] pub next_cursor:Option<String> }
+pub struct EnvironmentSpec {
+    #[serde(default)] pub variables: BTreeMap<String,String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub container: Option<String>,
+}
+impl Default for EnvironmentSpec { fn default()->Self{Self{variables:BTreeMap::new(),container:None}} }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct InspectRequest { pub reference:ArtifactRef, #[serde(default)] pub metadata:Metadata }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct InspectResult { pub reference:ArtifactRef, #[serde(default)] pub metadata:Metadata }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct VersionInfo { pub id:String, #[serde(default,skip_serializing_if="Option::is_none")] pub name:Option<String>, #[serde(default)] pub metadata:Metadata }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct VersionPage { #[serde(default)] pub items:Vec<VersionInfo>, #[serde(default,skip_serializing_if="Option::is_none")] pub next_cursor:Option<String> }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct FilePage { #[serde(default)] pub items:Vec<ResolvedFile>, #[serde(default,skip_serializing_if="Option::is_none")] pub next_cursor:Option<String> }
-
-#[async_trait]
-pub trait ArtifactProvider:Send+Sync+'static {
-    fn descriptor(&self)->ProviderDescriptor;
-    async fn resolve(&self, requirement:&ArtifactRequirement, context:&ResolveContext)->Result<Resolution>;
-
-    async fn prepare_acquisition(&self, file:&ResolvedFile, _context:&AcquireContext)->Result<AcquisitionPlan> {
-        Ok(AcquisitionPlan::ProviderManaged { state:file.source.clone() })
+pub struct ActionSpec {
+    pub version: u32,
+    pub name: String,
+    pub command: Vec<String>,
+    #[serde(default)] pub inputs: BTreeMap<String,ArtifactId>,
+    #[serde(default)] pub code: BTreeMap<String,ArtifactId>,
+    #[serde(default)] pub parameters: serde_json::Value,
+    #[serde(default)] pub environment: EnvironmentSpec,
+    #[serde(default)] pub outputs: BTreeMap<String,OutputSpec>,
+    #[serde(default)] pub resources: ResourceSpec,
+    #[serde(default)] pub budget: BudgetSpec,
+    #[serde(default)] pub network: NetworkPolicy,
+    #[serde(default)] pub sandbox: SandboxPolicy,
+    #[serde(default)] pub cache: CachePolicy,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub platform: Option<String>,
+}
+impl ActionSpec {
+    #[must_use]
+    pub fn command(name: impl Into<String>, command: Vec<String>) -> Self {
+        Self{version:1,name:name.into(),command,inputs:BTreeMap::new(),code:BTreeMap::new(),parameters:serde_json::Value::Null,environment:EnvironmentSpec::default(),outputs:BTreeMap::new(),resources:ResourceSpec::default(),budget:BudgetSpec::default(),network:NetworkPolicy::Deny,sandbox:SandboxPolicy::ReadOnlyInputs,cache:CachePolicy::Reproducible,platform:None}
     }
-
-    async fn acquire_managed(&self, _file:&ResolvedFile, _plan:&AcquisitionPlan, _destination:&Path, _context:&AcquireContext)->Result<Acquisition> {
-        Err(Error::Unsupported{provider:self.descriptor().name,operation:"managed acquisition"})
-    }
-
-    async fn search(&self,_request:&SearchRequest,_context:&ResolveContext)->Result<SearchPage>{ Err(Error::Unsupported{provider:self.descriptor().name,operation:"search"}) }
-    async fn inspect(&self,_request:&InspectRequest,_context:&ResolveContext)->Result<InspectResult>{ Err(Error::Unsupported{provider:self.descriptor().name,operation:"inspect"}) }
-    async fn list_versions(&self,_reference:&ArtifactRef,_cursor:Option<&str>,_context:&ResolveContext)->Result<VersionPage>{ Err(Error::Unsupported{provider:self.descriptor().name,operation:"versions"}) }
-    async fn list_files(&self,requirement:&ArtifactRequirement,cursor:Option<&str>,context:&ResolveContext)->Result<FilePage>{
-        if cursor.is_some(){ return Ok(FilePage::default()); }
-        let resolution=self.resolve(requirement,context).await?;
-        Ok(FilePage{items:resolution.files,next_cursor:None})
+    pub fn key(&self) -> Result<ActionKey> {
+        // The action key identifies the requested computation, not how/where it
+        // is scheduled. Names, retry/cache policy, budgets, and resource
+        // reservations therefore do not poison cache sharing. Network/sandbox
+        // policy and platform *do* affect the computation's observable world.
+        #[derive(Serialize)]
+        struct Identity<'a> {
+            version: u32,
+            command: &'a [String],
+            inputs: &'a BTreeMap<String,ArtifactId>,
+            code: &'a BTreeMap<String,ArtifactId>,
+            parameters: &'a serde_json::Value,
+            environment: &'a EnvironmentSpec,
+            outputs: &'a BTreeMap<String,OutputSpec>,
+            network: &'a NetworkPolicy,
+            sandbox: &'a SandboxPolicy,
+            platform: &'a Option<String>,
+        }
+        Ok(ActionKey(hash_canonical(&Identity{
+            version:self.version,
+            command:&self.command,
+            inputs:&self.inputs,
+            code:&self.code,
+            parameters:&self.parameters,
+            environment:&self.environment,
+            outputs:&self.outputs,
+            network:&self.network,
+            sandbox:&self.sandbox,
+            platform:&self.platform,
+        })?))
     }
 }
 
-pub type DynProvider=Arc<dyn ArtifactProvider>;
-pub fn provider_error(provider:impl Into<String>,error:impl fmt::Display)->Error{Error::Provider{provider:provider.into(),message:error.to_string()}}
-pub fn access_required(provider:impl Into<String>,requirement:AccessRequirement,message:impl Into<String>,action_url:Option<String>)->Error{Error::AccessRequired(AccessChallenge{provider:provider.into(),requirement,message:message.into(),action_url,tool:None})}
-pub fn external_tool_required(provider:impl Into<String>,tool:impl Into<String>,message:impl Into<String>)->Error{ let provider=provider.into(); Error::AccessRequired(AccessChallenge{provider,requirement:AccessRequirement::ExternalTool,message:message.into(),action_url:None,tool:Some(tool.into())}) }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExecutionMetrics {
+    pub wall_millis: u64,
+    #[serde(default)] pub bytes_read: u64,
+    #[serde(default)] pub bytes_written: u64,
+    #[serde(default)] pub estimated_cost_usd_micros: u64,
+}
 
-#[cfg(test)] mod tests { use super::*; #[test] fn reference_keeps_locator(){let r:ArtifactRef="hf:dataset:org/name@main".parse().unwrap();assert_eq!(r.locator(),"dataset:org/name@main");} #[test] fn paths_reject_traversal(){assert!(ArtifactPath::new("../secret").is_err());assert!(ArtifactPath::new("/absolute").is_err());} }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AttemptRecord {
+    pub id: Uuid,
+    pub action: ActionKey,
+    pub executor: String,
+    pub started_at: DateTime<Utc>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub finished_at: Option<DateTime<Utc>>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub exit_code: Option<i32>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub stdout: Option<ContentId>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub stderr: Option<ContentId>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub metrics: Option<ExecutionMetrics>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Realization {
+    pub id: Uuid,
+    pub action: ActionKey,
+    pub attempt: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub outputs: BTreeMap<String,ArtifactId>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Attestation {
+    pub id: Uuid,
+    pub subject: ArtifactId,
+    pub predicate_type: String,
+    pub statement: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub issuer: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub signature: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Checkpoint {
+    pub id: Uuid,
+    pub action: ActionKey,
+    pub name: String,
+    pub artifact: ArtifactId,
+    pub created_at: DateTime<Utc>,
+}
+
+pub fn canonical_json<T: Serialize>(value:&T)->Result<Vec<u8>> {
+    // All identity-bearing Artifactum types use BTreeMap and pre-sorted vectors.
+    Ok(serde_json::to_vec(value)?)
+}
+pub fn hash_bytes(bytes:&[u8])->Digest {
+    let mut hasher=Sha256::new(); hasher.update(bytes); let out=hasher.finalize();
+    Digest{algorithm:"sha256".into(),value:hex::encode(out)}
+}
+pub fn hash_canonical<T:Serialize>(value:&T)->Result<Digest>{Ok(hash_bytes(&canonical_json(value)?))}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn artifact_path_rejects_escape(){ assert!(ArtifactPath::new("../x").is_err()); assert!(ArtifactPath::new("..\\x").is_err()); assert!(ArtifactPath::new("/etc/passwd").is_err()); assert!(ArtifactPath::new("C:/Windows/system32").is_err()); assert!(ArtifactPath::new("C:\\Windows\\system32").is_err()); assert!(ArtifactPath::new("a/b").is_ok()); }
+    #[test]
+    fn action_key_is_stable(){ let a=ActionSpec::command("x",vec!["echo".into(),"hi".into()]); assert_eq!(a.key().unwrap(),a.key().unwrap()); }
+    #[test]
+    fn scheduling_does_not_change_action_key(){
+        let a=ActionSpec::command("x",vec!["echo".into(),"hi".into()]);
+        let mut b=a.clone(); b.name="renamed".into(); b.resources.cpus=Some(32.0); b.resources.memory_bytes=Some(1<<30); b.resources.timeout_seconds=Some(1); b.budget.max_wall_seconds=Some(1); b.cache=CachePolicy::Volatile;
+        assert_eq!(a.key().unwrap(),b.key().unwrap());
+        b.command.push("there".into()); assert_ne!(a.key().unwrap(),b.key().unwrap());
+    }
+    #[test]
+    fn trees_sort_entries(){ let d=ContentId(hash_bytes(b"x")); let t=TreeManifest::new(vec![TreeEntry{path:"z".parse().unwrap(),kind:TreeEntryKind::Blob,content:d.clone(),size:1,executable:None},TreeEntry{path:"a".parse().unwrap(),kind:TreeEntryKind::Blob,content:d,size:1,executable:None}]); assert_eq!(t.entries[0].path.as_str(),"a"); }
+}

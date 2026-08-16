@@ -5,20 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-[lib]
-name = "artifactum_provider_dvc"
-
-[[bin]]
-name = "artifactum-provider-dvc"
-path = "src/main.rs"
-
 [dependencies]
-artifactum-core = { path = "../artifactum-core" }
 artifactum-provider-command = { path = "../artifactum-provider-command" }
-artifactum-plugin-protocol = { path = "../artifactum-plugin-protocol" }
-async-trait.workspace = true
+artifactum-provider-sdk = { path = "../artifactum-provider-sdk" }
 tokio.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

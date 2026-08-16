@@ -1,3 +1,2 @@
-//! Artifactum gdrive provider backed by OpenDAL.
-use artifactum_provider_opendal::{LocatorMode,OpenDalProvider};
-#[must_use] pub fn provider()->OpenDalProvider{OpenDalProvider::new("gdrive",&["gdrive"],"gdrive",LocatorMode::Path)}
+use artifactum_provider_command::CommandProvider;
+#[must_use] pub fn provider()->CommandProvider{CommandProvider::new("gdrive",&["gdrive"],"rclone",&["cat","{profile_remote}:{locator}"])}

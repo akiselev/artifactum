@@ -11,7 +11,8 @@ name = "artifactum-provider-oci"
 path = "src/main.rs"
 [dependencies]
 artifactum-core = { path = "../artifactum-core" }
-artifactum-plugin-protocol = { path = "../artifactum-plugin-protocol" }
+artifactum-resolver = { path = "../artifactum-resolver" }
+artifactum-provider-sdk = { path = "../artifactum-provider-sdk" }
 async-trait.workspace = true
 oci-client = "0.17"
 serde_json.workspace = true
