@@ -1,0 +1,4 @@
+/target
+/.artifactum
+Artifacts.lock
+*.partial

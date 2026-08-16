@@ -1,0 +1,16 @@
+version = 1
+
+[artifacts.embedding]
+source = "huggingface:BAAI/bge-small-en-v1.5@main"
+include = [
+  "config.json",
+  "tokenizer.json",
+  "onnx/model.onnx",
+]
+materialize = ".artifactum/embedding"
+
+[artifacts.release_asset]
+source = "github:BurntSushi/ripgrep@14.1.1#asset=ripgrep-*-x86_64-unknown-linux-musl.tar.gz"
+
+[artifacts.fixture]
+source = "local:./fixtures/model"

@@ -1,0 +1,28 @@
+[package]
+name = "artifactum-provider-http"
+description = "HTTP/HTTPS provider for Artifactum"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "artifactum_provider_http"
+
+[[bin]]
+name = "artifactum-provider-http"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+artifactum-core = { path = "../artifactum-core" }
+artifactum-plugin-protocol = { path = "../artifactum-plugin-protocol" }
+artifactum-transport-http = { path = "../artifactum-transport-http" }
+async-trait.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true
