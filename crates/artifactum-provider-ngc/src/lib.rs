@@ -1,1 +1,17 @@
-use artifactum_provider_command::CommandProvider; #[must_use]pub fn provider()->CommandProvider{CommandProvider::new("ngc",&["ngc"],"ngc",&["registry","model","download-version","{locator}","--dest","{destination}"])}
+use artifactum_provider_command::CommandProvider;
+#[must_use]
+pub fn provider() -> CommandProvider {
+    CommandProvider::new(
+        "ngc",
+        &["ngc"],
+        "ngc",
+        &[
+            "registry",
+            "model",
+            "download-version",
+            "{locator}",
+            "--dest",
+            "{destination}",
+        ],
+    )
+}

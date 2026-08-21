@@ -1,3 +1,72 @@
-use std::collections::BTreeMap;use artifactum_core::ArtifactPath;use artifactum_provider_api::{ApiClient,bearer_from_env};use artifactum_resolver::{AcquireContext,AcquisitionPlan,ArtifactProvider,ArtifactRequirement,DigestSet,ProviderCapabilities,ProviderDescriptor,ResolveContext,Resolution,ResolvedFile,ResolvedRevision,Result};use async_trait::async_trait;
-#[derive(Clone,Default)]pub struct OsfProvider{api:ApiClient}
-#[async_trait]impl ArtifactProvider for OsfProvider{fn descriptor(&self)->ProviderDescriptor{ProviderDescriptor{name:"osf".into(),version:env!("CARGO_PKG_VERSION").into(),schemes:vec!["osf".into()],capabilities:ProviderCapabilities{resolve:true,acquire:true,..Default::default()}}}async fn resolve(&self,r:&ArtifactRequirement,_:&ResolveContext)->Result<Resolution>{let id=r.reference.locator();let h=bearer_from_env("OSF_TOKEN");let v:serde_json::Value=self.api.get_json("osf",&format!("https://api.osf.io/v2/files/{id}/"),&h).await?;let name=v["data"]["attributes"]["name"].as_str().unwrap_or("osf-file");let url=v["data"]["links"]["download"].as_str().unwrap_or_default();let files=vec![ResolvedFile{path:ArtifactPath::new(name)?,size:v["data"]["attributes"]["size"].as_u64(),digests:DigestSet(BTreeMap::new()),media_type:None,source:serde_json::json!({"url":url})}];Ok(Resolution{provider:"osf".into(),canonical_ref:format!("osf:{id}"),revision:Some(ResolvedRevision{id:v["data"]["attributes"]["date_modified"].as_str().unwrap_or(id).into(),requested:None}),files,provider_state:serde_json::Value::Null,metadata:BTreeMap::new()})}async fn prepare_acquisition(&self,f:&ResolvedFile,_:&AcquireContext)->Result<AcquisitionPlan>{Ok(AcquisitionPlan::Http{url:f.source["url"].as_str().unwrap_or_default().into(),headers:bearer_from_env("OSF_TOKEN"),resume:true})}}
+use artifactum_core::ArtifactPath;
+use artifactum_provider_api::{ApiClient, bearer_from_env};
+use artifactum_resolver::{
+    AcquireContext, AcquisitionPlan, ArtifactProvider, ArtifactRequirement, DigestSet,
+    ProviderCapabilities, ProviderDescriptor, Resolution, ResolveContext, ResolvedFile,
+    ResolvedRevision, Result,
+};
+use async_trait::async_trait;
+use std::collections::BTreeMap;
+#[derive(Clone, Default)]
+pub struct OsfProvider {
+    api: ApiClient,
+}
+#[async_trait]
+impl ArtifactProvider for OsfProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            name: "osf".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            schemes: vec!["osf".into()],
+            capabilities: ProviderCapabilities {
+                resolve: true,
+                acquire: true,
+                ..Default::default()
+            },
+        }
+    }
+    async fn resolve(&self, r: &ArtifactRequirement, _: &ResolveContext) -> Result<Resolution> {
+        let id = r.reference.locator();
+        let h = bearer_from_env("OSF_TOKEN");
+        let v: serde_json::Value = self
+            .api
+            .get_json("osf", &format!("https://api.osf.io/v2/files/{id}/"), &h)
+            .await?;
+        let name = v["data"]["attributes"]["name"]
+            .as_str()
+            .unwrap_or("osf-file");
+        let url = v["data"]["links"]["download"].as_str().unwrap_or_default();
+        let files = vec![ResolvedFile {
+            path: ArtifactPath::new(name)?,
+            size: v["data"]["attributes"]["size"].as_u64(),
+            digests: DigestSet(BTreeMap::new()),
+            media_type: None,
+            source: serde_json::json!({"url":url}),
+        }];
+        Ok(Resolution {
+            provider: "osf".into(),
+            canonical_ref: format!("osf:{id}"),
+            revision: Some(ResolvedRevision {
+                id: v["data"]["attributes"]["date_modified"]
+                    .as_str()
+                    .unwrap_or(id)
+                    .into(),
+                requested: None,
+            }),
+            files,
+            provider_state: serde_json::Value::Null,
+            metadata: BTreeMap::new(),
+        })
+    }
+    async fn prepare_acquisition(
+        &self,
+        f: &ResolvedFile,
+        _: &AcquireContext,
+    ) -> Result<AcquisitionPlan> {
+        Ok(AcquisitionPlan::Http {
+            url: f.source["url"].as_str().unwrap_or_default().into(),
+            headers: bearer_from_env("OSF_TOKEN"),
+            resume: true,
+        })
+    }
+}

@@ -1,3 +1,97 @@
-use std::collections::BTreeMap;use artifactum_core::ArtifactPath;use artifactum_provider_api::{ApiClient,bearer_from_env};use artifactum_resolver::{AcquireContext,AcquisitionPlan,ArtifactProvider,ArtifactRequirement,DigestSet,ProviderCapabilities,ProviderDescriptor,ResolveContext,Resolution,ResolvedFile,ResolvedRevision,Result};use async_trait::async_trait;
-#[derive(Clone,Default)]pub struct DataverseProvider{api:ApiClient}
-#[async_trait]impl ArtifactProvider for DataverseProvider{fn descriptor(&self)->ProviderDescriptor{ProviderDescriptor{name:"dataverse".into(),version:env!("CARGO_PKG_VERSION").into(),schemes:vec!["dataverse".into()],capabilities:ProviderCapabilities{resolve:true,acquire:true,..Default::default()}}}async fn resolve(&self,r:&ArtifactRequirement,c:&ResolveContext)->Result<Resolution>{let base=c.profile.as_ref().and_then(|p|p.config.get("base_url")).cloned().unwrap_or_else(||"https://dataverse.harvard.edu".into());let locator=r.reference.locator();let api=if locator.chars().all(|x|x.is_ascii_digit()){format!("{base}/api/datasets/{locator}")}else{format!("{base}/api/datasets/:persistentId/?persistentId={}",url::form_urlencoded::byte_serialize(locator.as_bytes()).collect::<String>())};let token=bearer_from_env("DATAVERSE_TOKEN");let v:serde_json::Value=self.api.get_json("dataverse",&api,&token).await?;let version=&v["data"]["latestVersion"];let rev=version["versionNumber"].as_i64().map(|n|format!("{n}.{}",version["versionMinorNumber"].as_i64().unwrap_or(0))).unwrap_or_else(||"latest".into());let mut files=Vec::new();if let Some(arr)=version["files"].as_array(){for f in arr{let df=&f["dataFile"];let id=df["id"].as_u64().unwrap_or(0);let name=f["label"].as_str().or_else(||df["filename"].as_str()).unwrap_or("file");files.push(ResolvedFile{path:ArtifactPath::new(name)?,size:df["filesize"].as_u64(),digests:DigestSet(BTreeMap::new()),media_type:df["contentType"].as_str().map(str::to_owned),source:serde_json::json!({"url":format!("{base}/api/access/datafile/{id}")})});}}Ok(Resolution{provider:"dataverse".into(),canonical_ref:format!("dataverse:{locator}@{rev}"),revision:Some(ResolvedRevision{id:rev,requested:r.revision.clone()}),files,provider_state:serde_json::json!({"base_url":base}),metadata:BTreeMap::new()})}async fn prepare_acquisition(&self,f:&ResolvedFile,_:&AcquireContext)->Result<AcquisitionPlan>{Ok(AcquisitionPlan::Http{url:f.source["url"].as_str().unwrap_or_default().into(),headers:bearer_from_env("DATAVERSE_TOKEN"),resume:true})}}
+use artifactum_core::ArtifactPath;
+use artifactum_provider_api::{ApiClient, bearer_from_env};
+use artifactum_resolver::{
+    AcquireContext, AcquisitionPlan, ArtifactProvider, ArtifactRequirement, DigestSet,
+    ProviderCapabilities, ProviderDescriptor, Resolution, ResolveContext, ResolvedFile,
+    ResolvedRevision, Result,
+};
+use async_trait::async_trait;
+use std::collections::BTreeMap;
+#[derive(Clone, Default)]
+pub struct DataverseProvider {
+    api: ApiClient,
+}
+#[async_trait]
+impl ArtifactProvider for DataverseProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            name: "dataverse".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            schemes: vec!["dataverse".into()],
+            capabilities: ProviderCapabilities {
+                resolve: true,
+                acquire: true,
+                ..Default::default()
+            },
+        }
+    }
+    async fn resolve(&self, r: &ArtifactRequirement, c: &ResolveContext) -> Result<Resolution> {
+        let base = c
+            .profile
+            .as_ref()
+            .and_then(|p| p.config.get("base_url"))
+            .cloned()
+            .unwrap_or_else(|| "https://dataverse.harvard.edu".into());
+        let locator = r.reference.locator();
+        let api = if locator.chars().all(|x| x.is_ascii_digit()) {
+            format!("{base}/api/datasets/{locator}")
+        } else {
+            format!(
+                "{base}/api/datasets/:persistentId/?persistentId={}",
+                url::form_urlencoded::byte_serialize(locator.as_bytes()).collect::<String>()
+            )
+        };
+        let token = bearer_from_env("DATAVERSE_TOKEN");
+        let v: serde_json::Value = self.api.get_json("dataverse", &api, &token).await?;
+        let version = &v["data"]["latestVersion"];
+        let rev = version["versionNumber"]
+            .as_i64()
+            .map(|n| {
+                format!(
+                    "{n}.{}",
+                    version["versionMinorNumber"].as_i64().unwrap_or(0)
+                )
+            })
+            .unwrap_or_else(|| "latest".into());
+        let mut files = Vec::new();
+        if let Some(arr) = version["files"].as_array() {
+            for f in arr {
+                let df = &f["dataFile"];
+                let id = df["id"].as_u64().unwrap_or(0);
+                let name = f["label"]
+                    .as_str()
+                    .or_else(|| df["filename"].as_str())
+                    .unwrap_or("file");
+                files.push(ResolvedFile {
+                    path: ArtifactPath::new(name)?,
+                    size: df["filesize"].as_u64(),
+                    digests: DigestSet(BTreeMap::new()),
+                    media_type: df["contentType"].as_str().map(str::to_owned),
+                    source: serde_json::json!({"url":format!("{base}/api/access/datafile/{id}")}),
+                });
+            }
+        }
+        Ok(Resolution {
+            provider: "dataverse".into(),
+            canonical_ref: format!("dataverse:{locator}@{rev}"),
+            revision: Some(ResolvedRevision {
+                id: rev,
+                requested: r.revision.clone(),
+            }),
+            files,
+            provider_state: serde_json::json!({"base_url":base}),
+            metadata: BTreeMap::new(),
+        })
+    }
+    async fn prepare_acquisition(
+        &self,
+        f: &ResolvedFile,
+        _: &AcquireContext,
+    ) -> Result<AcquisitionPlan> {
+        Ok(AcquisitionPlan::Http {
+            url: f.source["url"].as_str().unwrap_or_default().into(),
+            headers: bearer_from_env("DATAVERSE_TOKEN"),
+            resume: true,
+        })
+    }
+}

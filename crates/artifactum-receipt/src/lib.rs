@@ -1,7 +1,7 @@
 //! Producer-neutral research receipt contracts over Artifactum identities.
 //!
 //! The envelope records an immutable activity. Its generic payload remains
-//! producer-owned: a Lean proof check, Solverang solve and Sinbad simulation do
+//! producer-owned: a Lean proof check, Methodus solve and Sinbad simulation do
 //! not become variants of one universal scientific result enum.
 
 use artifactum_core::{ActionKey, ArtifactId, Digest, Metadata};
@@ -229,7 +229,9 @@ where
         };
         let bytes = serde_json::to_vec(&identity)?;
         let value = hex::encode(Sha256::digest(bytes));
-        Ok(ReceiptId(Digest::sha256(value).expect("sha256 output is valid")))
+        Ok(ReceiptId(
+            Digest::sha256(value).expect("sha256 output is valid"),
+        ))
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -273,15 +275,15 @@ mod tests {
         let action = ActionSpec::command("fixture", vec!["fixture".into()]);
         let mut receipt = ReceiptEnvelope {
             schema: SchemaIdentity {
-                name: "solverang-run-v1".into(),
+                name: "methodus-run-v1".into(),
                 version: 1,
                 digest: digest('1'),
             },
             receipt_id: ReceiptId(digest('0')),
             producer: ProducerIdentity {
-                repository: "akiselev/solverang".into(),
+                repository: "akiselev/methodus".into(),
                 commit: "abc123".into(),
-                package: "solverang".into(),
+                package: "methodus".into(),
                 package_version: "0.1.0".into(),
                 executable: artifact('2'),
             },
@@ -308,7 +310,7 @@ mod tests {
                 member: None,
             }],
             command: Some(RecordedCommand {
-                argv: vec!["solverang".into(), "solve".into()],
+                argv: vec!["methodus".into(), "solve".into()],
                 working_directory: None,
                 declared_environment: BTreeMap::new(),
             }),
@@ -326,8 +328,7 @@ mod tests {
         let receipt = fixture();
         receipt.validate().unwrap();
         let encoded = serde_json::to_vec(&receipt).unwrap();
-        let decoded: ReceiptEnvelope<serde_json::Value> =
-            serde_json::from_slice(&encoded).unwrap();
+        let decoded: ReceiptEnvelope<serde_json::Value> = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(decoded, receipt);
         decoded.validate().unwrap();
     }
@@ -350,7 +351,10 @@ mod tests {
         let mut receipt = fixture();
         std::mem::swap(&mut receipt.started_at, &mut receipt.finished_at);
         receipt.refresh_id().unwrap();
-        assert!(matches!(receipt.validate(), Err(ContractError::InvalidInterval)));
+        assert!(matches!(
+            receipt.validate(),
+            Err(ContractError::InvalidInterval)
+        ));
     }
 
     #[test]
@@ -361,7 +365,10 @@ mod tests {
             locator: "Eq. (7)".into(),
         };
         let encoded = serde_json::to_string(&anchor).unwrap();
-        assert_eq!(serde_json::from_str::<SourceAnchor>(&encoded).unwrap(), anchor);
+        assert_eq!(
+            serde_json::from_str::<SourceAnchor>(&encoded).unwrap(),
+            anchor
+        );
     }
 
     #[test]

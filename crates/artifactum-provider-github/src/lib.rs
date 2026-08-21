@@ -1,12 +1,104 @@
-use std::collections::BTreeMap;
 use artifactum_core::ArtifactPath;
-use artifactum_provider_api::{ApiClient,bearer_from_env};
-use artifactum_resolver::{AcquireContext,AcquisitionPlan,ArtifactProvider,ArtifactRequirement,DigestSet,Error,ProviderCapabilities,ProviderDescriptor,ResolveContext,Resolution,ResolvedFile,ResolvedRevision,Result};
+use artifactum_provider_api::{ApiClient, bearer_from_env};
+use artifactum_resolver::{
+    AcquireContext, AcquisitionPlan, ArtifactProvider, ArtifactRequirement, DigestSet, Error,
+    ProviderCapabilities, ProviderDescriptor, Resolution, ResolveContext, ResolvedFile,
+    ResolvedRevision, Result,
+};
 use async_trait::async_trait;
 use globset::Glob;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
-#[derive(Clone,Default)]pub struct GitHubProvider{api:ApiClient}
-#[derive(Deserialize)]struct Release{tag_name:String,assets:Vec<Asset>}
-#[derive(Deserialize)]struct Asset{name:String,browser_download_url:String,size:u64}
-#[async_trait]impl ArtifactProvider for GitHubProvider{fn descriptor(&self)->ProviderDescriptor{ProviderDescriptor{name:"github".into(),version:env!("CARGO_PKG_VERSION").into(),schemes:vec!["github".into(),"gh".into()],capabilities:ProviderCapabilities{resolve:true,acquire:true,..Default::default()}}}async fn resolve(&self,r:&ArtifactRequirement,_:&ResolveContext)->Result<Resolution>{let raw=r.reference.locator();let(asset_part,pattern)=raw.split_once('#').map_or((raw,"*"),|(a,b)|(a,b));let(repo,tag)=asset_part.rsplit_once('@').map_or((asset_part,"latest"),|(a,b)|(a,b));let url=if tag=="latest"{format!("https://api.github.com/repos/{repo}/releases/latest")}else{format!("https://api.github.com/repos/{repo}/releases/tags/{tag}")};let headers=bearer_from_env("GITHUB_TOKEN");let release:Release=self.api.get_json("github",&url,&headers).await?;let matcher=Glob::new(pattern).map_err(|e|Error::Provider{provider:"github".into(),message:e.to_string()})?.compile_matcher();let files=release.assets.into_iter().filter(|a|matcher.is_match(&a.name)).map(|a|Ok(ResolvedFile{path:ArtifactPath::new(&a.name)?,size:Some(a.size),digests:DigestSet(BTreeMap::new()),media_type:None,source:serde_json::json!({"url":a.browser_download_url})})).collect::<Result<Vec<_>>>()?;Ok(Resolution{provider:"github".into(),canonical_ref:format!("github:{repo}@{}#{pattern}",release.tag_name),revision:Some(ResolvedRevision{id:release.tag_name,requested:Some(tag.into())}),files,provider_state:serde_json::Value::Null,metadata:BTreeMap::new()})}async fn prepare_acquisition(&self,f:&ResolvedFile,_:&AcquireContext)->Result<AcquisitionPlan>{let url=f.source["url"].as_str().ok_or_else(||Error::Provider{provider:"github".into(),message:"missing asset URL".into()})?;let mut headers=bearer_from_env("GITHUB_TOKEN");headers.insert("Accept".into(),"application/octet-stream".into());Ok(AcquisitionPlan::Http{url:url.into(),headers,resume:true})}}
+#[derive(Clone, Default)]
+pub struct GitHubProvider {
+    api: ApiClient,
+}
+#[derive(Deserialize)]
+struct Release {
+    tag_name: String,
+    assets: Vec<Asset>,
+}
+#[derive(Deserialize)]
+struct Asset {
+    name: String,
+    browser_download_url: String,
+    size: u64,
+}
+#[async_trait]
+impl ArtifactProvider for GitHubProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            name: "github".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            schemes: vec!["github".into(), "gh".into()],
+            capabilities: ProviderCapabilities {
+                resolve: true,
+                acquire: true,
+                ..Default::default()
+            },
+        }
+    }
+    async fn resolve(&self, r: &ArtifactRequirement, _: &ResolveContext) -> Result<Resolution> {
+        let raw = r.reference.locator();
+        let (asset_part, pattern) = raw.split_once('#').map_or((raw, "*"), |(a, b)| (a, b));
+        let (repo, tag) = asset_part
+            .rsplit_once('@')
+            .map_or((asset_part, "latest"), |(a, b)| (a, b));
+        let url = if tag == "latest" {
+            format!("https://api.github.com/repos/{repo}/releases/latest")
+        } else {
+            format!("https://api.github.com/repos/{repo}/releases/tags/{tag}")
+        };
+        let headers = bearer_from_env("GITHUB_TOKEN");
+        let release: Release = self.api.get_json("github", &url, &headers).await?;
+        let matcher = Glob::new(pattern)
+            .map_err(|e| Error::Provider {
+                provider: "github".into(),
+                message: e.to_string(),
+            })?
+            .compile_matcher();
+        let files = release
+            .assets
+            .into_iter()
+            .filter(|a| matcher.is_match(&a.name))
+            .map(|a| {
+                Ok(ResolvedFile {
+                    path: ArtifactPath::new(&a.name)?,
+                    size: Some(a.size),
+                    digests: DigestSet(BTreeMap::new()),
+                    media_type: None,
+                    source: serde_json::json!({"url":a.browser_download_url}),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Resolution {
+            provider: "github".into(),
+            canonical_ref: format!("github:{repo}@{}#{pattern}", release.tag_name),
+            revision: Some(ResolvedRevision {
+                id: release.tag_name,
+                requested: Some(tag.into()),
+            }),
+            files,
+            provider_state: serde_json::Value::Null,
+            metadata: BTreeMap::new(),
+        })
+    }
+    async fn prepare_acquisition(
+        &self,
+        f: &ResolvedFile,
+        _: &AcquireContext,
+    ) -> Result<AcquisitionPlan> {
+        let url = f.source["url"].as_str().ok_or_else(|| Error::Provider {
+            provider: "github".into(),
+            message: "missing asset URL".into(),
+        })?;
+        let mut headers = bearer_from_env("GITHUB_TOKEN");
+        headers.insert("Accept".into(), "application/octet-stream".into());
+        Ok(AcquisitionPlan::Http {
+            url: url.into(),
+            headers,
+            resume: true,
+        })
+    }
+}

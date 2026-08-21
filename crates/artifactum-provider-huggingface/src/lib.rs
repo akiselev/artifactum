@@ -1,10 +1,101 @@
-use std::collections::BTreeMap;
 use artifactum_core::ArtifactPath;
-use artifactum_provider_api::{ApiClient,bearer_from_env};
-use artifactum_resolver::{AcquireContext,AcquisitionPlan,ArtifactProvider,ArtifactRequirement,DigestSet,ProviderCapabilities,ProviderDescriptor,ResolveContext,Resolution,ResolvedFile,ResolvedRevision,Result};
+use artifactum_provider_api::{ApiClient, bearer_from_env};
+use artifactum_resolver::{
+    AcquireContext, AcquisitionPlan, ArtifactProvider, ArtifactRequirement, DigestSet,
+    ProviderCapabilities, ProviderDescriptor, Resolution, ResolveContext, ResolvedFile,
+    ResolvedRevision, Result,
+};
 use async_trait::async_trait;
 use serde::Deserialize;
-#[derive(Clone,Default)]pub struct HuggingFaceProvider{api:ApiClient}
-#[derive(Deserialize)]struct Repo{sha:Option<String>,#[serde(default)]siblings:Vec<Sibling>}
-#[derive(Deserialize)]struct Sibling{rfilename:String,#[serde(default)]size:Option<u64>}
-#[async_trait]impl ArtifactProvider for HuggingFaceProvider{fn descriptor(&self)->ProviderDescriptor{ProviderDescriptor{name:"huggingface".into(),version:env!("CARGO_PKG_VERSION").into(),schemes:vec!["huggingface".into(),"hf".into()],capabilities:ProviderCapabilities{resolve:true,acquire:true,..Default::default()}}}async fn resolve(&self,r:&ArtifactRequirement,_:&ResolveContext)->Result<Resolution>{let mut raw=r.reference.locator();let dataset=raw.starts_with("dataset:");if dataset{raw=&raw[8..];}let(repo,rev)=raw.rsplit_once('@').map_or((raw,r.revision.as_deref().unwrap_or("main")),|(a,b)|(a,b));let kind=if dataset{"datasets"}else{"models"};let api=format!("https://huggingface.co/api/{kind}/{repo}/revision/{rev}");let headers=bearer_from_env("HF_TOKEN");let info:Repo=self.api.get_json("huggingface",&api,&headers).await?;let resolved=info.sha.unwrap_or_else(||rev.into());let prefix=if dataset{"datasets/"}else{""};let files=info.siblings.into_iter().map(|s|{let url=format!("https://huggingface.co/{prefix}{repo}/resolve/{resolved}/{}",s.rfilename);Ok(ResolvedFile{path:ArtifactPath::new(&s.rfilename)?,size:s.size,digests:DigestSet(BTreeMap::new()),media_type:None,source:serde_json::json!({"url":url})})}).collect::<Result<Vec<_>>>()?;Ok(Resolution{provider:"huggingface".into(),canonical_ref:format!("hf:{}{repo}@{resolved}",if dataset{"dataset:"}else{""}),revision:Some(ResolvedRevision{id:resolved,requested:Some(rev.into())}),files,provider_state:serde_json::Value::Null,metadata:BTreeMap::new()})}async fn prepare_acquisition(&self,f:&ResolvedFile,_:&AcquireContext)->Result<AcquisitionPlan>{Ok(AcquisitionPlan::Http{url:f.source["url"].as_str().unwrap_or_default().into(),headers:bearer_from_env("HF_TOKEN"),resume:true})}}
+use std::collections::BTreeMap;
+#[derive(Clone, Default)]
+pub struct HuggingFaceProvider {
+    api: ApiClient,
+}
+#[derive(Deserialize)]
+struct Repo {
+    sha: Option<String>,
+    #[serde(default)]
+    siblings: Vec<Sibling>,
+}
+#[derive(Deserialize)]
+struct Sibling {
+    rfilename: String,
+    #[serde(default)]
+    size: Option<u64>,
+}
+#[async_trait]
+impl ArtifactProvider for HuggingFaceProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            name: "huggingface".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            schemes: vec!["huggingface".into(), "hf".into()],
+            capabilities: ProviderCapabilities {
+                resolve: true,
+                acquire: true,
+                ..Default::default()
+            },
+        }
+    }
+    async fn resolve(&self, r: &ArtifactRequirement, _: &ResolveContext) -> Result<Resolution> {
+        let mut raw = r.reference.locator();
+        let dataset = raw.starts_with("dataset:");
+        if dataset {
+            raw = &raw[8..];
+        }
+        let (repo, rev) = raw
+            .rsplit_once('@')
+            .map_or((raw, r.revision.as_deref().unwrap_or("main")), |(a, b)| {
+                (a, b)
+            });
+        let kind = if dataset { "datasets" } else { "models" };
+        let api = format!("https://huggingface.co/api/{kind}/{repo}/revision/{rev}");
+        let headers = bearer_from_env("HF_TOKEN");
+        let info: Repo = self.api.get_json("huggingface", &api, &headers).await?;
+        let resolved = info.sha.unwrap_or_else(|| rev.into());
+        let prefix = if dataset { "datasets/" } else { "" };
+        let files = info
+            .siblings
+            .into_iter()
+            .map(|s| {
+                let url = format!(
+                    "https://huggingface.co/{prefix}{repo}/resolve/{resolved}/{}",
+                    s.rfilename
+                );
+                Ok(ResolvedFile {
+                    path: ArtifactPath::new(&s.rfilename)?,
+                    size: s.size,
+                    digests: DigestSet(BTreeMap::new()),
+                    media_type: None,
+                    source: serde_json::json!({"url":url}),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Resolution {
+            provider: "huggingface".into(),
+            canonical_ref: format!(
+                "hf:{}{repo}@{resolved}",
+                if dataset { "dataset:" } else { "" }
+            ),
+            revision: Some(ResolvedRevision {
+                id: resolved,
+                requested: Some(rev.into()),
+            }),
+            files,
+            provider_state: serde_json::Value::Null,
+            metadata: BTreeMap::new(),
+        })
+    }
+    async fn prepare_acquisition(
+        &self,
+        f: &ResolvedFile,
+        _: &AcquireContext,
+    ) -> Result<AcquisitionPlan> {
+        Ok(AcquisitionPlan::Http {
+            url: f.source["url"].as_str().unwrap_or_default().into(),
+            headers: bearer_from_env("HF_TOKEN"),
+            resume: true,
+        })
+    }
+}

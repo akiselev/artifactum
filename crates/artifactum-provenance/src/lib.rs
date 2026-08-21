@@ -1,49 +1,442 @@
 //! Provenance, attestations, trust policy and OCI interchange.
 
-use std::{collections::{BTreeMap,BTreeSet},path::{Path,PathBuf},process::Stdio};
-use artifactum_core::{ArtifactId,Attestation,ChunkManifest,ContentId,ContentKind,Digest,Realization};
-use artifactum_metadata::MetadataStore;
-use artifactum_store::{ArtifactStore,ContentStore};
+use artifactum_core::{
+    ArtifactId, Attestation, ChunkManifest, ContentId, ContentKind, Digest, Realization,
+};
+use artifactum_store::{ArtifactStore, ContentStore};
 use async_trait::async_trait;
-use chrono::Utc;
-use serde::{Deserialize,Serialize};
-use sha2::{Digest as _,Sha256};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+    process::Stdio,
+};
 use thiserror::Error;
-use tokio::{fs,process::Command};
-use uuid::Uuid;
+use tokio::{fs, process::Command};
 
-#[derive(Debug,Error)]pub enum Error{#[error("store error: {0}")]Store(#[from]artifactum_store::Error),#[error("metadata error: {0}")]Metadata(#[from]artifactum_metadata::Error),#[error("core error: {0}")]Core(#[from]artifactum_core::Error),#[error("JSON error: {0}")]Json(#[from]serde_json::Error),#[error("I/O error: {0}")]Io(#[from]std::io::Error),#[error("trust policy failed: {0}")]Policy(String),#[error("verifier failed: {0}")]Verifier(String),#[error("OCI publication requires `oras` in PATH") ]OrasMissing}
-pub type Result<T,E=Error>=std::result::Result<T,E>;
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("store error: {0}")]
+    Store(#[from] artifactum_store::Error),
+    #[error("metadata error: {0}")]
+    Metadata(#[from] artifactum_metadata::Error),
+    #[error("core error: {0}")]
+    Core(#[from] artifactum_core::Error),
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("trust policy failed: {0}")]
+    Policy(String),
+    #[error("verifier failed: {0}")]
+    Verifier(String),
+    #[error("OCI publication requires `oras` in PATH")]
+    OrasMissing,
+}
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-#[derive(Clone,Debug,Serialize,Deserialize)]pub struct Subject{pub name:String,pub digest:BTreeMap<String,String>}
-#[derive(Clone,Debug,Serialize,Deserialize)]pub struct InTotoStatement{#[serde(rename="_type")]pub typ:String,pub subject:Vec<Subject>,#[serde(rename="predicateType")]pub predicate_type:String,pub predicate:serde_json::Value}
-impl InTotoStatement{pub fn new(subject:&ArtifactId,predicate_type:impl Into<String>,predicate:serde_json::Value)->Self{Self{typ:"https://in-toto.io/Statement/v1".into(),subject:vec![Subject{name:"artifactum-artifact".into(),digest:BTreeMap::from([("sha256".into(),subject.0.value.clone())])}],predicate_type:predicate_type.into(),predicate}}}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Subject {
+    pub name: String,
+    pub digest: BTreeMap<String, String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InTotoStatement {
+    #[serde(rename = "_type")]
+    pub typ: String,
+    pub subject: Vec<Subject>,
+    #[serde(rename = "predicateType")]
+    pub predicate_type: String,
+    pub predicate: serde_json::Value,
+}
+impl InTotoStatement {
+    pub fn new(
+        subject: &ArtifactId,
+        predicate_type: impl Into<String>,
+        predicate: serde_json::Value,
+    ) -> Self {
+        Self {
+            typ: "https://in-toto.io/Statement/v1".into(),
+            subject: vec![Subject {
+                name: "artifactum-artifact".into(),
+                digest: BTreeMap::from([("sha256".into(), subject.0.value.clone())]),
+            }],
+            predicate_type: predicate_type.into(),
+            predicate,
+        }
+    }
+}
 
-pub fn slsa_provenance(subject:&ArtifactId,realization:&Realization,action:&artifactum_core::ActionSpec)->InTotoStatement{let materials=action.inputs.iter().chain(action.code.iter()).map(|(name,id)|serde_json::json!({"uri":format!("artifactum:{name}"),"digest":{"sha256":id.0.value}})).collect::<Vec<_>>();InTotoStatement::new(subject,"https://slsa.dev/provenance/v1",serde_json::json!({"buildDefinition":{"buildType":"https://artifactum.dev/build/v1","externalParameters":action.parameters,"internalParameters":{"actionKey":realization.action.to_string()},"resolvedDependencies":materials},"runDetails":{"builder":{"id":"https://artifactum.dev/engine"},"metadata":{"invocationId":realization.attempt.to_string(),"startedOn":null,"finishedOn":realization.created_at}}}))}
-pub fn in_toto_link(subject:&ArtifactId,realization:&Realization,action:&artifactum_core::ActionSpec)->InTotoStatement{InTotoStatement::new(subject,"https://in-toto.io/attestation/link/v0.3",serde_json::json!({"name":action.name,"command":action.command,"materials":action.inputs,"products":realization.outputs,"byproducts":{"attempt":realization.attempt},"environment":action.environment}))}
+pub fn slsa_provenance(
+    subject: &ArtifactId,
+    realization: &Realization,
+    action: &artifactum_core::ActionSpec,
+) -> InTotoStatement {
+    let materials=action.inputs.iter().chain(action.code.iter()).map(|(name,id)|serde_json::json!({"uri":format!("artifactum:{name}"),"digest":{"sha256":id.0.value}})).collect::<Vec<_>>();
+    InTotoStatement::new(
+        subject,
+        "https://slsa.dev/provenance/v1",
+        serde_json::json!({"buildDefinition":{"buildType":"https://artifactum.dev/build/v1","externalParameters":action.parameters,"internalParameters":{"actionKey":realization.action.to_string()},"resolvedDependencies":materials},"runDetails":{"builder":{"id":"https://artifactum.dev/engine"},"metadata":{"invocationId":realization.attempt.to_string(),"startedOn":null,"finishedOn":realization.created_at}}}),
+    )
+}
+pub fn in_toto_link(
+    subject: &ArtifactId,
+    realization: &Realization,
+    action: &artifactum_core::ActionSpec,
+) -> InTotoStatement {
+    InTotoStatement::new(
+        subject,
+        "https://in-toto.io/attestation/link/v0.3",
+        serde_json::json!({"name":action.name,"command":action.command,"materials":action.inputs,"products":realization.outputs,"byproducts":{"attempt":realization.attempt},"environment":action.environment}),
+    )
+}
 
-#[derive(Clone,Debug,Default,Serialize,Deserialize)]pub struct TrustPolicy{#[serde(default)]pub required_predicates:Vec<String>,#[serde(default)]pub allowed_issuers:Vec<String>,#[serde(default)]pub require_signature:bool,#[serde(default)]pub min_attestations:usize}
-pub fn evaluate_policy(policy:&TrustPolicy,attestations:&[Attestation])->Result<()> {if attestations.len()<policy.min_attestations{return Err(Error::Policy(format!("need {} attestations, found {}",policy.min_attestations,attestations.len())))}for p in&policy.required_predicates{if !attestations.iter().any(|a|&a.predicate_type==p){return Err(Error::Policy(format!("missing predicate `{p}`")))}}if !policy.allowed_issuers.is_empty()&&!attestations.iter().all(|a|a.issuer.as_ref().is_some_and(|i|policy.allowed_issuers.contains(i))){return Err(Error::Policy("attestation issuer is not allowed".into()))}if policy.require_signature&&attestations.iter().any(|a|a.signature.is_none()){return Err(Error::Policy("unsigned attestation present".into()))}Ok(())}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TrustPolicy {
+    #[serde(default)]
+    pub required_predicates: Vec<String>,
+    #[serde(default)]
+    pub allowed_issuers: Vec<String>,
+    #[serde(default)]
+    pub require_signature: bool,
+    #[serde(default)]
+    pub min_attestations: usize,
+}
+pub fn evaluate_policy(policy: &TrustPolicy, attestations: &[Attestation]) -> Result<()> {
+    if attestations.len() < policy.min_attestations {
+        return Err(Error::Policy(format!(
+            "need {} attestations, found {}",
+            policy.min_attestations,
+            attestations.len()
+        )));
+    }
+    for p in &policy.required_predicates {
+        if !attestations.iter().any(|a| &a.predicate_type == p) {
+            return Err(Error::Policy(format!("missing predicate `{p}`")));
+        }
+    }
+    if !policy.allowed_issuers.is_empty()
+        && !attestations.iter().all(|a| {
+            a.issuer
+                .as_ref()
+                .is_some_and(|i| policy.allowed_issuers.contains(i))
+        })
+    {
+        return Err(Error::Policy("attestation issuer is not allowed".into()));
+    }
+    if policy.require_signature && attestations.iter().any(|a| a.signature.is_none()) {
+        return Err(Error::Policy("unsigned attestation present".into()));
+    }
+    Ok(())
+}
 
-#[derive(Clone,Debug,Serialize,Deserialize)]pub struct VerificationRequest{pub subject:ArtifactId,pub expected_content_digest:Digest,pub artifact_path:PathBuf,#[serde(default)]pub attestations:Vec<Attestation>}
-#[derive(Clone,Debug,Serialize,Deserialize)]pub struct VerificationResult{pub verifier:String,pub ok:bool,pub message:String,#[serde(default)]pub evidence:serde_json::Value}
-#[async_trait]pub trait Verifier:Send+Sync{fn name(&self)->&str;async fn verify(&self,request:&VerificationRequest)->Result<VerificationResult>;}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VerificationRequest {
+    pub subject: ArtifactId,
+    pub expected_content_digest: Digest,
+    pub artifact_path: PathBuf,
+    #[serde(default)]
+    pub attestations: Vec<Attestation>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VerificationResult {
+    pub verifier: String,
+    pub ok: bool,
+    pub message: String,
+    #[serde(default)]
+    pub evidence: serde_json::Value,
+}
+#[async_trait]
+pub trait Verifier: Send + Sync {
+    fn name(&self) -> &str;
+    async fn verify(&self, request: &VerificationRequest) -> Result<VerificationResult>;
+}
 pub struct DigestVerifier;
-#[async_trait]impl Verifier for DigestVerifier{fn name(&self)->&str{"digest"}async fn verify(&self,r:&VerificationRequest)->Result<VerificationResult>{let bytes=fs::read(&r.artifact_path).await?;let mut h=Sha256::new();h.update(bytes);let got=hex::encode(h.finalize());Ok(VerificationResult{verifier:"digest".into(),ok:got==r.expected_content_digest.value.as_str(),message:if got==r.expected_content_digest.value.as_str(){"digest matches".into()}else{"digest mismatch".into()},evidence:serde_json::json!({"sha256":got})})}}
-#[derive(Clone,Debug)]pub struct CommandVerifier{pub verifier_name:String,pub program:String,pub args:Vec<String>}
-#[async_trait]impl Verifier for CommandVerifier{fn name(&self)->&str{&self.verifier_name}async fn verify(&self,r:&VerificationRequest)->Result<VerificationResult>{let mut c=Command::new(&self.program);for a in&self.args{c.arg(a.replace("{artifact}",&r.artifact_path.display().to_string()).replace("{sha256}",&r.expected_content_digest.value));}let out=c.stdout(Stdio::piped()).stderr(Stdio::piped()).output().await?;Ok(VerificationResult{verifier:self.verifier_name.clone(),ok:out.status.success(),message:String::from_utf8_lossy(if out.status.success(){&out.stdout}else{&out.stderr}).into_owned(),evidence:serde_json::Value::Null})}}
-pub fn sigstore_verifier()->CommandVerifier{CommandVerifier{verifier_name:"sigstore".into(),program:"cosign".into(),args:vec!["verify-blob".into(),"{artifact}".into()]}}
-pub fn pgp_verifier(signature:impl Into<String>)->CommandVerifier{CommandVerifier{verifier_name:"pgp".into(),program:"gpg".into(),args:vec!["--verify".into(),signature.into(),"{artifact}".into()]}}
+#[async_trait]
+impl Verifier for DigestVerifier {
+    fn name(&self) -> &str {
+        "digest"
+    }
+    async fn verify(&self, r: &VerificationRequest) -> Result<VerificationResult> {
+        let bytes = fs::read(&r.artifact_path).await?;
+        let mut h = Sha256::new();
+        h.update(bytes);
+        let got = hex::encode(h.finalize());
+        Ok(VerificationResult {
+            verifier: "digest".into(),
+            ok: got == r.expected_content_digest.value.as_str(),
+            message: if got == r.expected_content_digest.value.as_str() {
+                "digest matches".into()
+            } else {
+                "digest mismatch".into()
+            },
+            evidence: serde_json::json!({"sha256":got}),
+        })
+    }
+}
+#[derive(Clone, Debug)]
+pub struct CommandVerifier {
+    pub verifier_name: String,
+    pub program: String,
+    pub args: Vec<String>,
+}
+#[async_trait]
+impl Verifier for CommandVerifier {
+    fn name(&self) -> &str {
+        &self.verifier_name
+    }
+    async fn verify(&self, r: &VerificationRequest) -> Result<VerificationResult> {
+        let mut c = Command::new(&self.program);
+        for a in &self.args {
+            c.arg(
+                a.replace("{artifact}", &r.artifact_path.display().to_string())
+                    .replace("{sha256}", &r.expected_content_digest.value),
+            );
+        }
+        let out = c
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await?;
+        Ok(VerificationResult {
+            verifier: self.verifier_name.clone(),
+            ok: out.status.success(),
+            message: String::from_utf8_lossy(if out.status.success() {
+                &out.stdout
+            } else {
+                &out.stderr
+            })
+            .into_owned(),
+            evidence: serde_json::Value::Null,
+        })
+    }
+}
+pub fn sigstore_verifier() -> CommandVerifier {
+    CommandVerifier {
+        verifier_name: "sigstore".into(),
+        program: "cosign".into(),
+        args: vec!["verify-blob".into(), "{artifact}".into()],
+    }
+}
+pub fn pgp_verifier(signature: impl Into<String>) -> CommandVerifier {
+    CommandVerifier {
+        verifier_name: "pgp".into(),
+        program: "gpg".into(),
+        args: vec!["--verify".into(), signature.into(), "{artifact}".into()],
+    }
+}
 
-#[derive(Clone,Debug,Serialize,Deserialize)]#[serde(rename_all="camelCase")]struct Descriptor{media_type:String,digest:String,size:u64,#[serde(skip_serializing_if="Option::is_none")]artifact_type:Option<String>,#[serde(skip_serializing_if="Option::is_none")]annotations:Option<BTreeMap<String,String>>}
-#[derive(Clone,Debug,Serialize,Deserialize)]#[serde(rename_all="camelCase")]struct OciManifest{schema_version:u32,media_type:String,artifact_type:String,config:Descriptor,layers:Vec<Descriptor>}
-#[derive(Clone,Debug,Serialize,Deserialize)]#[serde(rename_all="camelCase")]struct OciIndex{schema_version:u32,manifests:Vec<Descriptor>}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Descriptor {
+    media_type: String,
+    digest: String,
+    size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artifact_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    annotations: Option<BTreeMap<String, String>>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OciManifest {
+    schema_version: u32,
+    media_type: String,
+    artifact_type: String,
+    config: Descriptor,
+    layers: Vec<Descriptor>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OciIndex {
+    schema_version: u32,
+    manifests: Vec<Descriptor>,
+}
 
-pub async fn export_oci(store:&ArtifactStore,root:&ArtifactId,destination:impl AsRef<Path>)->Result<PathBuf>{let dest=destination.as_ref();fs::create_dir_all(dest.join("blobs/sha256")).await?;fs::write(dest.join("oci-layout"),b"{\"imageLayoutVersion\":\"1.0.0\"}").await?;let mut seen_artifacts=BTreeSet::new();let mut seen_content=BTreeSet::new();let mut layers=Vec::new();collect_graph(store,root,dest,&mut seen_artifacts,&mut seen_content,&mut layers).await?;let config=b"{}";let config_digest=sha(config);write_blob(dest,&config_digest,config).await?;let manifest=OciManifest{schema_version:2,media_type:"application/vnd.oci.image.manifest.v1+json".into(),artifact_type:"application/vnd.artifactum.artifact.v1".into(),config:Descriptor{media_type:"application/vnd.oci.empty.v1+json".into(),digest:format!("sha256:{config_digest}"),size:config.len()as u64,artifact_type:None,annotations:None},layers};let manifest_bytes=serde_json::to_vec(&manifest)?;let manifest_digest=sha(&manifest_bytes);write_blob(dest,&manifest_digest,&manifest_bytes).await?;let index=OciIndex{schema_version:2,manifests:vec![Descriptor{media_type:"application/vnd.oci.image.manifest.v1+json".into(),digest:format!("sha256:{manifest_digest}"),size:manifest_bytes.len()as u64,artifact_type:Some("application/vnd.artifactum.artifact.v1".into()),annotations:Some(BTreeMap::from([("org.opencontainers.image.ref.name".into(),"artifactum".into()),("dev.artifactum.root".into(),root.to_string())]))}]};fs::write(dest.join("index.json"),serde_json::to_vec_pretty(&index)?).await?;Ok(dest.to_path_buf())}
-async fn collect_graph(store:&ArtifactStore,id:&ArtifactId,dest:&Path,seen_a:&mut BTreeSet<String>,seen_c:&mut BTreeSet<String>,layers:&mut Vec<Descriptor>)->Result<()> {if !seen_a.insert(id.to_string()){return Ok(())}let a=store.load_artifact(id).await?;let ab=artifactum_core::canonical_json(&a)?;write_blob(dest,&id.0.value,&ab).await?;layers.push(Descriptor{media_type:"application/vnd.artifactum.manifest.v1+json".into(),digest:id.to_string(),size:ab.len()as u64,artifact_type:None,annotations:Some(BTreeMap::from([("dev.artifactum.role".into(),"artifact-manifest".into())]))});collect_content(store,&a.content,dest,seen_c,layers).await?;if let Some(s)=a.schema{Box::pin(collect_graph(store,&s,dest,seen_a,seen_c,layers)).await?;}match a.kind{ContentKind::Collection=>{let c:artifactum_core::CollectionManifest=serde_json::from_slice(&store.read_content(&a.content).await?)?;for e in c.entries{Box::pin(collect_graph(store,&e.artifact,dest,seen_a,seen_c,layers)).await?;}},ContentKind::Tree=>{let t:artifactum_core::TreeManifest=serde_json::from_slice(&store.read_content(&a.content).await?)?;for e in t.entries{collect_content(store,&e.content,dest,seen_c,layers).await?;}},ContentKind::Blob=>{if a.annotations.get("artifactum.storage").is_some_and(|v|v=="cdc-v1"){let c:ChunkManifest=serde_json::from_slice(&store.read_content(&a.content).await?)?;for chunk in c.chunks{collect_content(store,&chunk.content,dest,seen_c,layers).await?;}}}}Ok(())}
-async fn collect_content(store:&ArtifactStore,id:&ContentId,dest:&Path,seen:&mut BTreeSet<String>,layers:&mut Vec<Descriptor>)->Result<()> {if !seen.insert(id.to_string()){return Ok(())}let b=store.read_content(id).await?;write_blob(dest,&id.0.value,&b).await?;layers.push(Descriptor{media_type:"application/octet-stream".into(),digest:id.to_string(),size:b.len()as u64,artifact_type:None,annotations:Some(BTreeMap::from([("dev.artifactum.role".into(),"content".into())]))});Ok(())}
-fn sha(b:&[u8])->String{let mut h=Sha256::new();h.update(b);hex::encode(h.finalize())}
-async fn write_blob(dest:&Path,digest:&str,b:&[u8])->Result<()> {let p=dest.join("blobs/sha256").join(digest);if !fs::try_exists(&p).await?{fs::write(p,b).await?;}Ok(())}
+pub async fn export_oci(
+    store: &ArtifactStore,
+    root: &ArtifactId,
+    destination: impl AsRef<Path>,
+) -> Result<PathBuf> {
+    let dest = destination.as_ref();
+    fs::create_dir_all(dest.join("blobs/sha256")).await?;
+    fs::write(
+        dest.join("oci-layout"),
+        b"{\"imageLayoutVersion\":\"1.0.0\"}",
+    )
+    .await?;
+    let mut seen_artifacts = BTreeSet::new();
+    let mut seen_content = BTreeSet::new();
+    let mut layers = Vec::new();
+    collect_graph(
+        store,
+        root,
+        dest,
+        &mut seen_artifacts,
+        &mut seen_content,
+        &mut layers,
+    )
+    .await?;
+    let config = b"{}";
+    let config_digest = sha(config);
+    write_blob(dest, &config_digest, config).await?;
+    let manifest = OciManifest {
+        schema_version: 2,
+        media_type: "application/vnd.oci.image.manifest.v1+json".into(),
+        artifact_type: "application/vnd.artifactum.artifact.v1".into(),
+        config: Descriptor {
+            media_type: "application/vnd.oci.empty.v1+json".into(),
+            digest: format!("sha256:{config_digest}"),
+            size: config.len() as u64,
+            artifact_type: None,
+            annotations: None,
+        },
+        layers,
+    };
+    let manifest_bytes = serde_json::to_vec(&manifest)?;
+    let manifest_digest = sha(&manifest_bytes);
+    write_blob(dest, &manifest_digest, &manifest_bytes).await?;
+    let index = OciIndex {
+        schema_version: 2,
+        manifests: vec![Descriptor {
+            media_type: "application/vnd.oci.image.manifest.v1+json".into(),
+            digest: format!("sha256:{manifest_digest}"),
+            size: manifest_bytes.len() as u64,
+            artifact_type: Some("application/vnd.artifactum.artifact.v1".into()),
+            annotations: Some(BTreeMap::from([
+                (
+                    "org.opencontainers.image.ref.name".into(),
+                    "artifactum".into(),
+                ),
+                ("dev.artifactum.root".into(), root.to_string()),
+            ])),
+        }],
+    };
+    fs::write(dest.join("index.json"), serde_json::to_vec_pretty(&index)?).await?;
+    Ok(dest.to_path_buf())
+}
+async fn collect_graph(
+    store: &ArtifactStore,
+    id: &ArtifactId,
+    dest: &Path,
+    seen_a: &mut BTreeSet<String>,
+    seen_c: &mut BTreeSet<String>,
+    layers: &mut Vec<Descriptor>,
+) -> Result<()> {
+    if !seen_a.insert(id.to_string()) {
+        return Ok(());
+    }
+    let a = store.load_artifact(id).await?;
+    let ab = artifactum_core::canonical_json(&a)?;
+    write_blob(dest, &id.0.value, &ab).await?;
+    layers.push(Descriptor {
+        media_type: "application/vnd.artifactum.manifest.v1+json".into(),
+        digest: id.to_string(),
+        size: ab.len() as u64,
+        artifact_type: None,
+        annotations: Some(BTreeMap::from([(
+            "dev.artifactum.role".into(),
+            "artifact-manifest".into(),
+        )])),
+    });
+    collect_content(store, &a.content, dest, seen_c, layers).await?;
+    if let Some(s) = a.schema {
+        Box::pin(collect_graph(store, &s, dest, seen_a, seen_c, layers)).await?;
+    }
+    match a.kind {
+        ContentKind::Collection => {
+            let c: artifactum_core::CollectionManifest =
+                serde_json::from_slice(&store.read_content(&a.content).await?)?;
+            for e in c.entries {
+                Box::pin(collect_graph(
+                    store,
+                    &e.artifact,
+                    dest,
+                    seen_a,
+                    seen_c,
+                    layers,
+                ))
+                .await?;
+            }
+        }
+        ContentKind::Tree => {
+            let t: artifactum_core::TreeManifest =
+                serde_json::from_slice(&store.read_content(&a.content).await?)?;
+            for e in t.entries {
+                collect_content(store, &e.content, dest, seen_c, layers).await?;
+            }
+        }
+        ContentKind::Blob => {
+            if a.annotations
+                .get("artifactum.storage")
+                .is_some_and(|v| v == "cdc-v1")
+            {
+                let c: ChunkManifest =
+                    serde_json::from_slice(&store.read_content(&a.content).await?)?;
+                for chunk in c.chunks {
+                    collect_content(store, &chunk.content, dest, seen_c, layers).await?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+async fn collect_content(
+    store: &ArtifactStore,
+    id: &ContentId,
+    dest: &Path,
+    seen: &mut BTreeSet<String>,
+    layers: &mut Vec<Descriptor>,
+) -> Result<()> {
+    if !seen.insert(id.to_string()) {
+        return Ok(());
+    }
+    let b = store.read_content(id).await?;
+    write_blob(dest, &id.0.value, &b).await?;
+    layers.push(Descriptor {
+        media_type: "application/octet-stream".into(),
+        digest: id.to_string(),
+        size: b.len() as u64,
+        artifact_type: None,
+        annotations: Some(BTreeMap::from([(
+            "dev.artifactum.role".into(),
+            "content".into(),
+        )])),
+    });
+    Ok(())
+}
+fn sha(b: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(b);
+    hex::encode(h.finalize())
+}
+async fn write_blob(dest: &Path, digest: &str, b: &[u8]) -> Result<()> {
+    let p = dest.join("blobs/sha256").join(digest);
+    if !fs::try_exists(&p).await? {
+        fs::write(p, b).await?;
+    }
+    Ok(())
+}
 
-pub async fn publish_oci_with_oras(layout:&Path,reference:&str)->Result<()> {if !executable_exists("oras"){return Err(Error::OrasMissing)}let source=format!("{}:artifactum",layout.display());let status=Command::new("oras").arg("cp").arg("--from-oci-layout").arg(source).arg(reference).status().await?;if !status.success(){return Err(Error::Verifier(format!("oras exited with {status}")))}Ok(())}
-fn executable_exists(name:&str)->bool{std::env::var_os("PATH").is_some_and(|p|std::env::split_paths(&p).any(|d|d.join(name).is_file()))}
+pub async fn publish_oci_with_oras(layout: &Path, reference: &str) -> Result<()> {
+    if !executable_exists("oras") {
+        return Err(Error::OrasMissing);
+    }
+    let source = format!("{}:artifactum", layout.display());
+    let status = Command::new("oras")
+        .arg("cp")
+        .arg("--from-oci-layout")
+        .arg(source)
+        .arg(reference)
+        .status()
+        .await?;
+    if !status.success() {
+        return Err(Error::Verifier(format!("oras exited with {status}")));
+    }
+    Ok(())
+}
+fn executable_exists(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
+}
