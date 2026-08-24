@@ -14,6 +14,8 @@ use opendal::Operator;
 use std::{collections::BTreeMap, path::Path};
 use tokio::io::AsyncWriteExt;
 
+type ConfigAndPath = (BTreeMap<String, String>, String, BTreeMap<String, String>);
+
 #[derive(Clone, Debug)]
 pub enum LocatorMode {
     Path,
@@ -71,7 +73,7 @@ impl OpenDalProvider {
         &self,
         requirement: &ArtifactRequirement,
         profile: Option<&ProviderProfile>,
-    ) -> Result<(BTreeMap<String, String>, String, BTreeMap<String, String>)> {
+    ) -> Result<ConfigAndPath> {
         let mut config = self.default_config.clone();
         if let Some(profile) = profile {
             for (k, v) in &profile.config {

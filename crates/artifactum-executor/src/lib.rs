@@ -545,7 +545,7 @@ async fn run_process(
     });
     let wait = async {
         loop {
-            tokio::select! {status=child.wait()=>return status,_=sleep(Duration::from_millis(150))=>{if let Some(path)=cancel_file{if fs::try_exists(path).await.unwrap_or(false){let _=child.kill().await;return child.wait().await;}}}}
+            tokio::select! {status=child.wait()=>return status,_=sleep(Duration::from_millis(150))=>{if let Some(path)=cancel_file && fs::try_exists(path).await.unwrap_or(false){let _=child.kill().await;return child.wait().await;}}}
         }
     };
     let status = if let Some(sec) = resources.timeout_seconds {

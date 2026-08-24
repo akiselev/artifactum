@@ -178,19 +178,19 @@ impl Engine {
             self.metadata
                 .set_kv(&format!("previous-action:{key}"), &previous.to_string())?;
         }
-        if !force && matches!(spec.cache, CachePolicy::Pure | CachePolicy::Reproducible) {
-            if let Some(r) = self.metadata.latest_realization(&key)? {
-                if self.realization_available(&r).await? {
-                    self.metadata
-                        .set_kv(&format!("last-action:{}", spec.name), &key.to_string())?;
-                    return Ok(RunResult {
-                        action: key,
-                        attempt: None,
-                        realization: r,
-                        cache_hit: true,
-                    });
-                }
-            }
+        if !force
+            && matches!(spec.cache, CachePolicy::Pure | CachePolicy::Reproducible)
+            && let Some(r) = self.metadata.latest_realization(&key)?
+            && self.realization_available(&r).await?
+        {
+            self.metadata
+                .set_kv(&format!("last-action:{}", spec.name), &key.to_string())?;
+            return Ok(RunResult {
+                action: key,
+                attempt: None,
+                realization: r,
+                cache_hit: true,
+            });
         }
         let exec = self
             .executors
@@ -352,15 +352,15 @@ impl Engine {
         attempt.metrics = Some(result.metrics.clone());
         self.metadata.record_attempt(&attempt)?;
         self.capture_checkpoint_dir(&key, &checkpoint_out).await?;
-        if let Some(max) = spec.budget.max_usd_micros {
-            if result.metrics.estimated_cost_usd_micros > max {
-                self.store.release_lease(lease.id).await?;
-                let _ = fs::remove_file(&cancel_file).await;
-                return Err(Error::BudgetExceeded(format!(
-                    "cost {}µUSD > {}µUSD",
-                    result.metrics.estimated_cost_usd_micros, max
-                )));
-            }
+        if let Some(max) = spec.budget.max_usd_micros
+            && result.metrics.estimated_cost_usd_micros > max
+        {
+            self.store.release_lease(lease.id).await?;
+            let _ = fs::remove_file(&cancel_file).await;
+            return Err(Error::BudgetExceeded(format!(
+                "cost {}µUSD > {}µUSD",
+                result.metrics.estimated_cost_usd_micros, max
+            )));
         }
         if result.exit_code != 0 {
             self.store.release_lease(lease.id).await?;
@@ -652,15 +652,15 @@ impl Engine {
     ) -> Result<RunResult> {
         let key = spec.key()?;
         self.metadata.record_action(&key, &spec)?;
-        if let Some(existing) = self.metadata.latest_realization(&key)? {
-            if existing.outputs == outputs {
-                return Ok(RunResult {
-                    action: key,
-                    attempt: None,
-                    realization: existing,
-                    cache_hit: true,
-                });
-            }
+        if let Some(existing) = self.metadata.latest_realization(&key)?
+            && existing.outputs == outputs
+        {
+            return Ok(RunResult {
+                action: key,
+                attempt: None,
+                realization: existing,
+                cache_hit: true,
+            });
         }
         let attempt_id = Uuid::new_v4();
         let now = Utc::now();

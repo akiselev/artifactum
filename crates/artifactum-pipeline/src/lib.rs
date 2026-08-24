@@ -428,7 +428,7 @@ impl PipelineRunner {
         plan(&self.project, targets)
     }
     pub async fn run(&self, targets: &[String], frozen: bool) -> Result<PipelineRun> {
-        let (mut lock, sources) = self.acquire_sources(frozen).await?;
+        let (lock, sources) = self.acquire_sources(frozen).await?;
         let p = self.plan(targets)?;
         let outputs = Arc::new(tokio::sync::Mutex::new(
             BTreeMap::<String, ArtifactId>::new(),

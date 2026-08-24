@@ -163,11 +163,9 @@ impl ArtifactStore {
         let p = d.value.get(..2).unwrap_or("00");
         Ok(base.join(p).join(&d.value))
     }
-    #[must_use]
     pub fn content_path(&self, id: &ContentId) -> Result<PathBuf> {
         Self::digest_path(&self.content_dir(), &id.0)
     }
-    #[must_use]
     pub fn artifact_path(&self, id: &ArtifactId) -> Result<PathBuf> {
         Self::digest_path(&self.artifacts_dir(), &id.0)
     }
@@ -233,14 +231,14 @@ impl ArtifactStore {
     ) -> Result<ContentId> {
         let path = path.as_ref();
         let (digest, _) = hash_file(path).await?;
-        if let Some(expected) = expected {
-            if &digest != expected {
-                let _ = fs::remove_file(path).await;
-                return Err(Error::Integrity {
-                    expected: expected.to_string(),
-                    actual: digest.to_string(),
-                });
-            }
+        if let Some(expected) = expected
+            && &digest != expected
+        {
+            let _ = fs::remove_file(path).await;
+            return Err(Error::Integrity {
+                expected: expected.to_string(),
+                actual: digest.to_string(),
+            });
         }
         let id = ContentId(digest);
         let dest = self.content_path(&id)?;
@@ -567,10 +565,10 @@ impl ArtifactStore {
                 }
             }
             MaterializationMode::Auto => {
-                if !try_reflink(&src, target).await? {
-                    if independent_inode || fs::hard_link(&src, target).await.is_err() {
-                        fs::copy(&src, target).await?;
-                    }
+                if !try_reflink(&src, target).await?
+                    && (independent_inode || fs::hard_link(&src, target).await.is_err())
+                {
+                    fs::copy(&src, target).await?;
                 }
             }
         }
@@ -970,7 +968,7 @@ async fn try_reflink(source: &Path, target: &Path) -> Result<bool> {
             return Ok(true);
         }
         let _ = fs::remove_file(target).await;
-        return Ok(false);
+        Ok(false)
     }
     #[cfg(target_os = "macos")]
     {

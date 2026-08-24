@@ -418,49 +418,32 @@ pub struct BudgetSpec {
     pub max_wall_seconds: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkPolicy {
+    #[default]
     Deny,
     Allow,
     SourceOnly,
 }
-impl Default for NetworkPolicy {
-    fn default() -> Self {
-        Self::Deny
-    }
-}
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxPolicy {
     None,
+    #[default]
     ReadOnlyInputs,
     Bubblewrap,
     Container,
 }
-impl Default for SandboxPolicy {
-    fn default() -> Self {
-        Self::ReadOnlyInputs
-    }
-}
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EnvironmentSpec {
     #[serde(default)]
     pub variables: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container: Option<String>,
 }
-impl Default for EnvironmentSpec {
-    fn default() -> Self {
-        Self {
-            variables: BTreeMap::new(),
-            container: None,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ActionSpec {
     pub version: u32,

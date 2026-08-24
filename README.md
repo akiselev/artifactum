@@ -42,7 +42,7 @@ Content identity is never provenance. The same bytes can be observed from multip
 
 ## Build
 
-Rust 1.85+ is required.
+Rust 1.91+ is required. The OpenDAL 0.58 provider stack requires this MSRV.
 
 ```bash
 cargo build --workspace --all-targets

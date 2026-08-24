@@ -6,29 +6,10 @@ use artifactum_resolver::{
     ResolvedRevision, Result,
 };
 use async_trait::async_trait;
-use serde::Deserialize;
 use std::collections::BTreeMap;
 #[derive(Clone, Default)]
 pub struct ZenodoProvider {
     api: ApiClient,
-}
-#[derive(Deserialize)]
-struct Record {
-    id: u64,
-    #[serde(default)]
-    files: Vec<File>,
-}
-#[derive(Deserialize)]
-struct File {
-    key: String,
-    size: u64,
-    checksum: Option<String>,
-    links: Links,
-}
-#[derive(Deserialize)]
-struct Links {
-    self_: Option<String>,
-    content: Option<String>,
 }
 #[async_trait]
 impl ArtifactProvider for ZenodoProvider {

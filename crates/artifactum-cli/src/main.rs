@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use artifactum_action::{ActionBuilder, diff};
 use artifactum_core::{ActionKey, ArtifactId, CachePolicy, ContentKind, OutputSpec};
 use artifactum_engine::Engine;
@@ -365,7 +365,7 @@ async fn entry() -> Result<()> {
 }
 async fn run() -> Result<()> {
     let mut cli = Cli::parse();
-    if cli.project == PathBuf::from("Artifactum.toml")
+    if cli.project == Path::new("Artifactum.toml")
         && !fs::try_exists(&cli.project).await?
         && fs::try_exists("Artifacts.toml").await?
     {
@@ -521,7 +521,6 @@ async fn run() -> Result<()> {
             print_value(cli.json, &artifactum_pipeline::plan(&p, &targets)?)?;
         }
         Command::Run { targets, frozen } => {
-            let p = ProjectManifest::load(&cli.project).await?;
             let rb = resolver_builder_with_plugins(
                 store.clone(),
                 metadata.clone(),

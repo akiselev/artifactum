@@ -433,10 +433,10 @@ async fn handle(
             if key.eq_ignore_ascii_case("content-length") {
                 content_length = value.trim().parse().map_err(|_| Error::Protocol)?;
             }
-            if key.eq_ignore_ascii_case("authorization") {
-                if let Some(token) = &token {
-                    authorized = value.trim() == format!("Bearer {token}");
-                }
+            if key.eq_ignore_ascii_case("authorization")
+                && let Some(token) = &token
+            {
+                authorized = value.trim() == format!("Bearer {token}");
             }
         }
     }

@@ -24,4 +24,6 @@ jobs:
         run: cargo test --workspace
       - name: Clippy
         if: runner.os == 'Linux'
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        # Keep correctness/style lints strict while the explicitly advisory
+        # workspace `pedantic` group remains warning-only.
+        run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::pedantic
