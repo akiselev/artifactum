@@ -39,6 +39,7 @@ Content identity is never provenance. The same bytes can be observed from multip
 - Native file/HTTP remote CAS mirroring with digest verification and a minimal Artifactum CAS server.
 - in-toto/SLSA representation helpers, attestations, trust policy evaluation, digest/Sigstore/PGP verifier boundaries, OCI-layout export, and ORAS publication.
 - Legacy Artifactum 0.3 blob-CAS migration.
+- Durable raw evidence (`artifactum-evidence`): immutable assets with producer-declared `sha256`/`blake3` digests verified on ingest, content-addressed run receipts and sealed claims (asset → run → claim lineage), re-hash verification of a stored claim, and upward lineage queries. The scientific-assets profile Sinbad consumes; see [docs/EVIDENCE.md](docs/EVIDENCE.md).
 
 ## Build
 
@@ -189,4 +190,6 @@ Artifactum-to-Artifactum remotes are independent of origin providers. File and n
 - [Store v2](docs/STORE_V2.md)
 - [Execution and cache semantics](docs/EXECUTION.md)
 - [Providers and plugins](docs/PLUGINS.md)
+- [Durable raw evidence and lineage](docs/EVIDENCE.md)
+- [Status](STATUS.md)
 - [Validation / observational testing](AGENT_TESTING.md)

@@ -1,0 +1,16 @@
+{
+  "schema": "sinbad-oracle-result/1",
+  "tool": {
+    "name": "sinbad-oracle-fenicsx",
+    "version": "0.11.0.post0",
+    "normalization_version": 1
+  },
+  "case_id": "01-poisson/independent-comparison-4x4",
+  "status": {
+    "status": "satisfied"
+  },
+  "observables": {
+    "energy": 4611946820702459291,
+    "l2_error": 4590362407644000577
+  }
+}

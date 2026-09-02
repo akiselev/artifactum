@@ -1,0 +1,29 @@
+[package]
+name = "artifactum-evidence"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Durable raw-evidence assets with content-addressed run receipts and claim lineage over the Artifactum CAS"
+
+[dependencies]
+artifactum-core = { path = "../artifactum-core" }
+artifactum-engine = { path = "../artifactum-engine" }
+artifactum-metadata = { path = "../artifactum-metadata" }
+artifactum-receipt = { path = "../artifactum-receipt" }
+artifactum-store = { path = "../artifactum-store" }
+blake3.workspace = true
+chrono.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

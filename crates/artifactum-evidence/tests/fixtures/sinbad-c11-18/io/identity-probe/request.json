@@ -1,0 +1,16 @@
+{
+  "schema": "sinbad-oracle-request/1",
+  "tool": {
+    "name": "sinbad-oracle-fenicsx",
+    "version": "sv0-c5-identity-probe",
+    "normalization_version": 1
+  },
+  "capability": "poisson",
+  "case_id": "01-poisson/identity-probe",
+  "model_digest": "blake3:identity-probe",
+  "refinement": [
+    4,
+    4
+  ],
+  "observables": []
+}

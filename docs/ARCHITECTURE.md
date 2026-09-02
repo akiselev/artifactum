@@ -58,6 +58,8 @@
 - `artifactum-pipeline`: project/lock format, DAG planner, maps, scheduler.
 - `artifactum-remote`: origin-independent CAS mirroring/server.
 - `artifactum-provenance`: in-toto/SLSA/verification/OCI.
+- `artifactum-receipt`: producer-neutral research receipt contracts (`ReceiptEnvelope`).
+- `artifactum-evidence`: durable raw-evidence assets, content-addressed runs and sealed claims with re-hash verification and lineage (`docs/EVIDENCE.md`).
 - `artifactum-plugin-protocol`: generic multiplexable framing.
 - `artifactum-plugin-host`: daemonkit-backed process/session owner.
 - `artifactum-provider-sdk`: provider-to-plugin adapter.

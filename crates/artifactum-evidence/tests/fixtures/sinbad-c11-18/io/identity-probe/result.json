@@ -1,0 +1,15 @@
+{
+  "schema": "sinbad-oracle-result/1",
+  "tool": {
+    "name": "sinbad-oracle-fenicsx",
+    "version": "0.11.0.post0",
+    "normalization_version": 1
+  },
+  "case_id": "01-poisson/identity-probe",
+  "status": {
+    "status": "refused",
+    "class": "version_lie",
+    "message": "requested sinbad-oracle-fenicsx@sv0-c5-identity-probe (normalization 1), running sinbad-oracle-fenicsx@0.11.0.post0 (normalization 1)"
+  },
+  "observables": {}
+}

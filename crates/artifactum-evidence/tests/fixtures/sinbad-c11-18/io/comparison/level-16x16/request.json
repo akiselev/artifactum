@@ -1,0 +1,19 @@
+{
+  "schema": "sinbad-oracle-request/1",
+  "tool": {
+    "name": "sinbad-oracle-fenicsx",
+    "version": "0.11.0.post0",
+    "normalization_version": 1
+  },
+  "capability": "poisson",
+  "case_id": "01-poisson/independent-comparison-16x16",
+  "model_digest": "4863e9b9daffbf3927b8ec113945854f8035d1d5510b20daaabbb02eba7c91b7",
+  "refinement": [
+    16,
+    16
+  ],
+  "observables": [
+    "energy",
+    "l2_error"
+  ]
+}

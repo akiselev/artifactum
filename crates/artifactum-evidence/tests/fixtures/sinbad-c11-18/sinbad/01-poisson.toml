@@ -1,0 +1,55 @@
+schema = "sinbad-case/1"
+name = "poisson-unit-square-mms"
+
+[model]
+source = "physics/corpus/01-poisson.res"
+model = "Poisson"
+# `source_digest` is written by `sinbad compile`, never authored.
+
+[geometry]
+kind = "mesh_profile"
+[geometry.profile]
+family = "simplex_box"
+dimension = 2
+extent = [[0.0, 1.0], [0.0, 1.0]]
+subdivisions = [4, 4]
+[geometry.refinement]
+kind = "explicit"
+subdivisions = [[4, 4], [8, 8], [16, 16]]
+
+[[regions]]
+name = "walls"
+select = { kind = "box_faces", faces = ["all"] }
+
+[[bindings]]
+slot = "provider/diffusivity"
+model = { kind = "constant", value = "1.0 m^2/s" }
+
+[[bindings]]
+slot = "provider/exact_u"
+model = { kind = "expression", expr = "sin(pi*x) * sin(pi*y)", unit = "dimensionless" }
+
+# `manufactured` cannot derive this forcing: Scientia's `AlgebraOperation::ManufacturedForcing`
+# expands `div` only of an explicit `grad(...)` node (contract C11.6), not `div(k * grad(u))`'s
+# scalar-times-gradient shape, even though `k` is the constant 1.0 bound above. The closed form
+# below is the exact forcing for `-div(k * grad(u_exact)) = f` with `k = 1` and
+# `u_exact = sin(pi x) sin(pi y)` (`f = -k * laplacian(u_exact) = 2 pi^2 k sin(pi x) sin(pi y)`),
+# authored directly as an `expression` binding instead (GX-B2 deviation, see plan.rs module docs).
+[[bindings]]
+slot = "source/f"
+model = { kind = "expression", expr = "2 * pi^2 * sin(pi*x) * sin(pi*y)", unit = "m^-3*s^-1" }
+
+[solve]
+# The reference/1 catalog entry already carries CG max_iterations = 4 * dimension,
+# absolute_tolerance = 1e-12, relative_tolerance = 1e-10 — the exact literals
+# duplicated in src/poisson.rs. No inline override is needed to mirror them.
+policy = "reference/1"
+
+[verification]
+# reference-orders/1 carries ExecutionTolerances::reference() and the SV0-B5
+# spatial/temporal minimum order of 1.8.
+policy = "reference-orders/1"
+
+[[observables]]
+name = "energy"
+extraction = { kind = "domain_integral" }
