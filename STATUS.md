@@ -72,10 +72,16 @@ Sinbad's meshes and solutions (in-memory only), and the container image digest.
 
 ## Open
 
-- **SV0-C2 Sinbad side** is not landed (Sinbad is another lane's repository). The exact calls
-  and the five wiring steps are in `docs/EVIDENCE.md` § "Sinbad wiring". Until Sinbad calls
-  `put_asset` at the moment stdout/stderr and result bytes exist and `record_claim` after
-  `promote_and_seal`, future claims will keep losing their raw bytes.
+- **SV0-C2 Sinbad side landed** (Sinbad `17c56c3`, 2026-09-04, GX-CONTRACTS C12.4):
+  `sinbad::evidence::EvidenceLedger` ingests request/result/stdout/stderr per adapter
+  invocation, records executions, and seals promoted claims with the encoded manifest;
+  `docs/EVIDENCE.md` § "Sinbad wiring" items 1–4 are wired, item 5 (gating
+  `evaluate_promotion` on `verify_claim`) is still open on the Sinbad side. Item 4's wording was
+  corrected here on 2026-09-04: the ingested manifest's declared digest is the blake3 of its
+  bytes (the identity is a projection hash the store cannot verify against bytes); Sinbad
+  carries the identity in the claim payload. Sinbad also records deviations: execution
+  recording is a ledger method called after `run_plan`, and the claim id is returned beside
+  the decision rather than written into the sealed `SupportClaim.evidence_ids`.
 - **No CLI surface yet** (`artifactum evidence verify <claim>` / `explain <artifact>`); the
   Rust API is the deliverable Sinbad consumes. Existing `artifactum lineage` and
   `artifact inspect` already work on evidence artifacts.

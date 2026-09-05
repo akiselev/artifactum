@@ -127,8 +127,11 @@ every `ComparisonReport.result_artifacts` entry. The wiring is:
    `StoredAsset.artifact`), keeping `digest` as Sinbad's blake3 and `provenance` as prose.
    `validate_campaign`'s existing `validate_asset` needs no change.
 4. **Seal after `promote_and_seal`.** Ingest `encode_campaign_manifest(&manifest)` as an asset
-   (declared digest = the manifest identity, media type
-   `application/vnd.sinbad.campaign-manifest+json`) and call `record_claim` with
+   (declared digest = the blake3 of the encoded bytes, media type
+   `application/vnd.sinbad.campaign-manifest+json`; the manifest *identity* is a projection
+   hash, not a hash of the bytes, so it cannot be the declared digest — the store verifies
+   declared digests against bytes; carry the identity in the claim payload instead) and call
+   `record_claim` with
    `subject` = the `SupportClaim.id`, `state` = the `SupportState` name, `runs` = every
    cited `OracleRun`'s run artifact plus the `CaseExecution` run, `assets` = the sealed
    manifest and the frozen source, `payload` = the `PromotionDecision` JSON. Store the claim id
